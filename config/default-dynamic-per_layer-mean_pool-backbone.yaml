@@ -1,19 +1,19 @@
-title: SER-Dynamic-{model.model_name}-(steps-${trainer.max_epochs})-(bs-${train.batch_size})-(LR-${optimizer.params.learning_rate})-(wd-${optimizer.params.weight_decay})-Pretraining
+title: SER-Dynamic-${model.model_name}-(steps-${trainer.max_epochs})-(bs-${train.batch_size})-(LR-${optimizer.params.learning_rate})-(wd-${optimizer.params.weight_decay})
 
 wandb_entity: alefiury
 
 datasets:
     train:
         - name: Train
-          metadata_path: "/mnt/EA3C54E23C54AB79/Projetos/InterSpeech 2025/ravdess_train.csv"
-          base_dir: "/mnt/EA3C54E23C54AB79/Projetos/InterSpeech 2025/Audio_Speech_Actors_01-24"
+          metadata_path: "/raid/alefiury/SER/InterSpeech2025/ravdess_train.csv"
+          base_dir: "/raid/alefiury/SER/InterSpeech2025/Audio_Speech_Actors_01-24"
           filename_column: "filename"
           target_column: "emotion"
 
     val:
         - name: Validation
-          metadata_path: "/mnt/EA3C54E23C54AB79/Projetos/InterSpeech 2025/ravdess_val.csv"
-          base_dir: "/mnt/EA3C54E23C54AB79/Projetos/InterSpeech 2025/Audio_Speech_Actors_01-24"
+          metadata_path: "/raid/alefiury/SER/InterSpeech2025/ravdess_val.csv"
+          base_dir: "/raid/alefiury/SER/InterSpeech2025/Audio_Speech_Actors_01-24"
           filename_column: "filename"
           target_column: "emotion"
 
@@ -41,7 +41,7 @@ data:
     }
 
 train:
-    batch_size: 8
+    batch_size: 16
     shuffle: True
     num_workers: 12
 

@@ -7,6 +7,7 @@ import pandas as pd
 import torchaudio
 import numpy as np
 from torch.utils.data import Dataset
+from transformers import WhisperFeatureExtractor
 
 
 class EmbeddingDataset(Dataset):
@@ -317,5 +318,13 @@ class DynamicCollate:
             return_tensors="pt",
             padding=True
         )
+
+        # Special case for Whisper, that expects a fixed input size of 3000 (30 seconds)
+        if isinstance(self.processor, WhisperFeatureExtractor) and processed.input_features.shape[-1] < 3000:
+            processed = self.processor(
+                audios,
+                return_tensors="pt",
+                sampling_rate=self.target_sr,
+            )
 
         return processed, targets

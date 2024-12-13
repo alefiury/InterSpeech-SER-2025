@@ -106,7 +106,7 @@ class PLWrapper(pl.LightningModule):
         """Forward pass for the model."""
         return self.model(x, **kwargs)
 
-    def on_before_optimizer_step(self, optimizer, optimizer_idx):
+    def on_before_optimizer_step(self, optimizer):
         """
         Used to log the gradients' norm during training.
         Useful for detecting gradient explosion/vanishing.

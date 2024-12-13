@@ -1,6 +1,10 @@
 #!/bin/bash
 GPU_ID=6
-CONFIG_PATH=("../config/default_weighted_sum.yaml" "../config/default.yaml" "../config/default_transformers.yaml" "../config/default_transformers_seqaug.yaml")
+CONFIG_PATH=("../config/default-dynamic-per_layer-att_pool.yaml" \
+            "../config/default-dynamic-per_layer-mean_pool-backbone.yaml" \
+            "../config/default-dynamic-per_layer-mean_pool.yaml" \
+            "../config/default-dynamic-weighted_sum-att_pool.yaml" \
+            "../config/default-dynamic-weighted_sum-mean_pool.yaml")
 
 for i in "${CONFIG_PATH[@]}"
 do

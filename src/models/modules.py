@@ -137,7 +137,7 @@ class SERBaseModel(nn.Module, ABC):
         mlp_output_size: int = 7,
         mlp_dropout: float = 0.1,
         mlp_activation_func: str = "relu",
-        layer_weight_strategy: str = "per_layer", # "transformer" or "weighted_sum"
+        layer_weight_strategy: str = "per_layer", # "per_layer" or "weighted_sum"
         num_feature_layers: int = 25,
         specific_layer_idx: int = -1,
         pooling_strategy: str = "mean", # "mean" or "attpool"
@@ -365,6 +365,11 @@ class SERDynamicModel(SERBaseModel):
         super().__init__(**kwargs)
         config = AutoConfig.from_pretrained(model_name, output_hidden_states=True)
         self.backbone = AutoModel.from_pretrained(model_name, config=config)
+
+        # Whisper is an encoder-encoder model, we only need the encoder part
+        if "whisper" in model_name.lower():
+            self.backbone = self.backbone.encoder
+
         self.freeze_backbone = freeze_backbone
         if freeze_backbone:
             self._freeze_backbone()
