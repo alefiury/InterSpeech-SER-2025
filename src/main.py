@@ -72,6 +72,8 @@ def main() -> None:
 
     model = PLWrapper(config)
 
+    pprint(model)
+
     trainer = pl.Trainer(
         **config["trainer"],
         logger=logger,

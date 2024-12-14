@@ -183,8 +183,6 @@ class DynamicDataset(Dataset):
         self.data_type = data_type
         self.class_num = class_num
 
-        print("CLASS NUM", class_num, self.data_type)
-
         self.target_sr = target_sr
         # Cache for sampling rate resamplers
         self.resamplers = {}
@@ -199,8 +197,6 @@ class DynamicDataset(Dataset):
         min_length = int(self.min_duration * self.target_sr)
         len_audio = audio.shape[-1]
 
-        print("1", audio.shape, len_audio)
-
         if self.use_rand_truncation and len_audio > min_length:
             segment_length = random.randint(min_length, len_audio)
 
@@ -209,8 +205,6 @@ class DynamicDataset(Dataset):
             end = start + segment_length
 
             audio = audio[..., start:end]
-
-        print("2", audio.shape[-1])
 
         return audio
 
@@ -254,7 +248,7 @@ class DynamicDataset(Dataset):
             # Sample lambda from beta distribution
             mix_lambda = np.random.beta(self.mixup_alpha, self.mixup_alpha)
 
-            # pad shorter audio
+            # Audios must have the same length
             if audio_original.shape[-1] > audio_rand.shape[-1]:
                 audio_rand = torch.nn.functional.pad(audio_rand, (0, audio_original.shape[-1] - audio_rand.shape[-1]))
             elif audio_original.shape[-1] < audio_rand.shape[-1]:
@@ -276,10 +270,10 @@ class DynamicDataset(Dataset):
             target = torch.zeros(self.class_num)
             target[main_target] = 1.0
 
-        if self.use_rand_truncation:
+        if self.use_rand_truncation and self.data_type == "train":
             audio = self._random_truncation(audio)
 
-        if self.insert_white_noise:
+        if self.insert_white_noise and self.data_type == "train":
             # dynamically insert white noise
             white_noise_amp = torch.rand(1) * (self.max_white_noise_amp - self.min_white_noise_amp) + self.min_white_noise_amp
             audio = audio + white_noise_amp * torch.randn_like(audio)
@@ -291,7 +285,7 @@ class DynamicCollate:
     def __init__(
         self,
         padding_value: float = 0.0,
-        processor=None,
+        processor = None,
         target_sr: int = 16000
     ):
         """

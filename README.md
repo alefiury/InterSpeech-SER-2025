@@ -74,7 +74,7 @@ pip install -r requirements.txt --extra-index-url https://download.pytorch.org/w
 
 - WavLM Large
     - 25 Layers
-    - Input Dim: 1280
+    - Input Dim: 1024
     - microsoft/wavlm-large
 
 - Whisper Tiny
