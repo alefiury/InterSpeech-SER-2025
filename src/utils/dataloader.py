@@ -322,3 +322,41 @@ class DynamicCollate:
             )
 
         return processed, targets
+
+
+class XEUSNestCollate:
+    def __init__(
+        self,
+        padding_value: float = 0.0,
+    ):
+        """
+        Collation function for dynamic batching of audio data.
+
+        Params:
+            padding_value (float): Value to use for padding shorter sequences.
+            processor: A processor or feature extractor to process raw audio
+                       into features if desired.
+        """
+        self.padding_value = padding_value
+
+    def __call__(self, batch: List[Tuple[torch.Tensor, torch.Tensor]]) -> Tuple[torch.Tensor, Optional[torch.Tensor], torch.Tensor]:
+        audios, targets = zip(*batch)
+
+        audios = [torch.from_numpy(audio) if isinstance(audio, np.ndarray) else audio for audio in audios]
+        targets = torch.stack([t if isinstance(t, torch.Tensor) else torch.tensor(t) for t in targets])
+        # pad audios ana take the length
+        audios_lengths = [audio.shape[-1] for audio in audios]
+        # pad audios
+        max_length = max(audios_lengths)
+
+        padded_audios = torch.full((len(audios), max_length), self.padding_value)
+
+        for i, audio in enumerate(audios):
+            padded_audios[i, :audio.shape[-1]] = audio.float()
+
+        processed = {
+            "wavs": padded_audios,
+            "wav_lengths": torch.tensor(audios_lengths),
+        }
+
+        return processed, targets

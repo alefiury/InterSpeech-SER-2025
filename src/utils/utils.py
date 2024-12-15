@@ -2,7 +2,7 @@ import torch
 import pandas as pd
 from transformers import AutoFeatureExtractor
 
-from utils.dataloader import DynamicDataset, DynamicCollate
+from utils.dataloader import DynamicDataset, DynamicCollate, XEUSNestCollate
 
 
 def build_dataloaders(config):
@@ -19,12 +19,14 @@ def build_dataloaders(config):
     train_data = pd.read_csv(config.datasets.train[0].metadata_path)
     val_data = pd.read_csv(config.datasets.val[0].metadata_path)
 
-    processor = AutoFeatureExtractor.from_pretrained(config.model.model_name)
-
-    collate_fn = DynamicCollate(
-        target_sr=config.data.target_sr,
-        processor=processor,
-    )
+    if config.model.model_type.lower() == "xeus" or config.model.model_type.lower() == "nest":
+        collate_fn = XEUSNestCollate()
+    else:
+        processor = AutoFeatureExtractor.from_pretrained(config.model.model_name)
+        collate_fn = DynamicCollate(
+            target_sr=config.data.target_sr,
+            processor=processor,
+        )
 
     # use map to build "target" column
     train_data["target"] = train_data[config.datasets.train[0].target_column].map(

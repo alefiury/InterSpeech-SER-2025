@@ -7,6 +7,18 @@ import torch.nn.init as init
 import torch.nn.functional as F
 from transformers import AutoModel, AutoConfig
 
+# Backward compatibility
+try:
+    from espnet2.tasks.ssl import SSLTask
+except ImportError:
+    SSLTask = None
+
+# Backward compatibility
+try:
+    from nemo.collections.asr.models import EncDecDenoiseMaskedTokenPredModel
+except ImportError:
+    EncDecDenoiseMaskedTokenPredModel = None
+
 
 ACTIVATIONS_FUNCS = {
     "relu": nn.ReLU(),
@@ -388,6 +400,111 @@ class SERDynamicModel(SERBaseModel):
         hidden_states = outputs.hidden_states  # tuple of (layer_0,...,layer_n)
         # [num_layers,B,T,F]
         all_layers = torch.stack(hidden_states)
+        # transform to [B,num_layers,T,F]
+        all_layers = all_layers.permute(1, 0, 2, 3)
+        return all_layers
+
+    def _get_embedding_dim(self) -> int:
+        return self.mlp.layers[0].in_features
+
+
+class XEUSModel(SERBaseModel):
+    """
+    Uses a pretrained backbone (e.g. WavLM).
+    """
+    def __init__(
+        self,
+        checkpoint_path: str = "checkpoints/xeus_checkpoint.pth",
+        freeze_backbone: bool = True,
+        **kwargs
+    ):
+        super().__init__(**kwargs)
+        self.backbone, _ = SSLTask.build_model_from_file(
+            None,
+            checkpoint_path,
+        )
+
+        self.freeze_backbone = freeze_backbone
+        if self.freeze_backbone:
+            self._freeze_backbone()
+            self.backbone.eval()
+
+    def _freeze_backbone(self):
+        for param in self.backbone.parameters():
+            param.requires_grad = False
+
+    def _get_embeddings(self, x: Tuple[torch.Tensor, torch.Tensor]) -> torch.Tensor:
+        wavs = x["wavs"]
+        wav_lengths = x["wav_lengths"]
+
+        if self.freeze_backbone:
+            with torch.no_grad():
+                hidden_states = self.backbone.encode(wavs, wav_lengths, use_mask=False, use_final_output=False)[0] # get only the hidden states
+        else:
+            hidden_states = self.backbone.encode(wavs, wav_lengths, use_mask=False, use_final_output=False)
+        # [num_layers,B,T,F]
+        all_layers = torch.stack(hidden_states)
+        # transform to [B,num_layers,T,F]
+        all_layers = all_layers.permute(1, 0, 2, 3)
+        return all_layers
+
+    def _get_embedding_dim(self) -> int:
+        return self.mlp.layers[0].in_features
+
+
+class NESTModel(SERBaseModel):
+    """
+    Uses a pretrained backbone (e.g. WavLM).
+    """
+    def __init__(
+        self,
+        model_name: str = "nvidia/ssl_en_nest_xlarge_v1.0",
+        freeze_backbone: bool = True,
+        **kwargs
+    ):
+        print("INSIDE NEST MODEL")
+        super().__init__(**kwargs)
+        nest_model = EncDecDenoiseMaskedTokenPredModel.from_pretrained(model_name=model_name)
+        self.backbone = nest_model.encoder
+        self.preprocessor = nest_model.preprocessor
+        self.hidden_states = []
+
+        # Register forward hooks for all encoder layers
+        for layer in self.backbone.layers:
+            layer.register_forward_hook(self._hook_fn)
+
+        self.freeze_backbone = freeze_backbone
+        if self.freeze_backbone:
+            self._freeze_backbone()
+            self.backbone.eval()
+
+    def _hook_fn(self, module, input, output):
+        """Hook function to capture layer outputs"""
+        self.hidden_states.append(output)
+
+    def _freeze_backbone(self):
+        for param in self.backbone.parameters():
+            param.requires_grad = False
+
+    def _get_embeddings(self, x: Tuple[torch.Tensor, torch.Tensor]) -> torch.Tensor:
+        wavs = x["wavs"]
+        wav_lengths = x["wav_lengths"]
+        # Clear previous hidden states
+        self.hidden_states = []
+
+        if self.freeze_backbone:
+            with torch.no_grad():
+                # Extract Mel spectrograms
+                processed_signal, processed_signal_length = self.preprocessor(input_signal=wavs, length=wav_lengths)
+                # Hidden states will be captured by the forward hook
+                _, _ = self.backbone(audio_signal=processed_signal, length=processed_signal_length)
+        else:
+            # Extract Mel spectrograms
+            processed_signal, processed_signal_length = self.preprocessor(input_signal=wavs, length=wav_lengths)
+            # Hidden states will be captured by the forward hook
+            _, _ = self.backbone(audio_signal=processed_signal, length=processed_signal_length)
+        # [num_layers,B,T,F]
+        all_layers = torch.stack(self.hidden_states)
         # transform to [B,num_layers,T,F]
         all_layers = all_layers.permute(1, 0, 2, 3)
         return all_layers
