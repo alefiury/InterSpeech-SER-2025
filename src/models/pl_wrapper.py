@@ -51,7 +51,7 @@ class PLWrapper(pl.LightningModule):
         if self.config.model.model_type.lower() == "xeus" or self.config.model.model_type.lower() == "nest":
             collate_fn = XEUSNestCollate()
         else:
-            processor = AutoFeatureExtractor.from_pretrained(config.model.model_name)
+            processor = AutoFeatureExtractor.from_pretrained(self.config.model.model_name)
             collate_fn = DynamicCollate(
                 target_sr=self.config.data.target_sr,
                 processor=processor,
@@ -71,7 +71,7 @@ class PLWrapper(pl.LightningModule):
         if self.config.model.model_type.lower() == "xeus" or self.config.model.model_type.lower() == "nest":
             collate_fn = XEUSNestCollate()
         else:
-            processor = AutoFeatureExtractor.from_pretrained(config.model.model_name)
+            processor = AutoFeatureExtractor.from_pretrained(self.config.model.model_name)
             collate_fn = DynamicCollate(
                 target_sr=self.config.data.target_sr,
                 processor=processor,

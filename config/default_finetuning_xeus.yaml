@@ -5,17 +5,17 @@ wandb_entity: alefiury
 datasets:
     train:
         - name: Train
-          metadata_path: "/raid/alefiury/SER/InterSpeech2025/ravdess_train.csv"
-          base_dir: "/raid/alefiury/SER/InterSpeech2025/Audio_Speech_Actors_01-24"
-          filename_column: "filename"
-          target_column: "emotion"
+          metadata_path: "/raid/alefiury/SER/InterSpeech2025/challenge_dataset/train-X_and_O_filtered.csv"
+          base_dir: "/raid/alefiury/SER/InterSpeech2025/challenge_dataset/Audios"
+          filename_column: "FileName"
+          target_column: "EmoClass"
 
     val:
         - name: Validation
-          metadata_path: "/raid/alefiury/SER/InterSpeech2025/ravdess_val.csv"
-          base_dir: "/raid/alefiury/SER/InterSpeech2025/Audio_Speech_Actors_01-24"
-          filename_column: "filename"
-          target_column: "emotion"
+          metadata_path: "/raid/alefiury/SER/InterSpeech2025/challenge_dataset/val-X_and_O_filtered.csv"
+          base_dir: "/raid/alefiury/SER/InterSpeech2025/challenge_dataset/Audios"
+          filename_column: "FileName"
+          target_column: "EmoClass"
 
 data:
     num_classes: 8
@@ -31,18 +31,18 @@ data:
 
     # label2id must represent the names of the target in the metadata file
     label2id: {
-        "neutral": 0,
-        "calm": 1,
-        "happy": 2,
-        "sad": 3,
-        "angry": 4,
-        "fearful": 5,
-        "disgust": 6,
-        "surprised": 7
+        "A": 0,
+        "C": 1,
+        "D": 2,
+        "F": 3,
+        "H": 4,
+        "N": 5,
+        "S": 6,
+        "U": 7
     }
 
 train:
-    batch_size: 32
+    batch_size: 48
     shuffle: True
     num_workers: 12
 
