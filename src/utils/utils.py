@@ -19,14 +19,14 @@ def build_dataloaders(config):
     train_data = pd.read_csv(config.datasets.train[0].metadata_path)
     val_data = pd.read_csv(config.datasets.val[0].metadata_path)
 
-    if config.model.model_type.lower() == "xeus" or config.model.model_type.lower() == "nest":
-        collate_fn = XEUSNestCollate()
-    else:
-        processor = AutoFeatureExtractor.from_pretrained(config.model.model_name)
-        collate_fn = DynamicCollate(
-            target_sr=config.data.target_sr,
-            processor=processor,
-        )
+    # if config.model.model_type.lower() == "xeus" or config.model.model_type.lower() == "nest":
+    #     collate_fn = XEUSNestCollate()
+    # else:
+    #     processor = AutoFeatureExtractor.from_pretrained(config.model.model_name)
+    #     collate_fn = DynamicCollate(
+    #         target_sr=config.data.target_sr,
+    #         processor=processor,
+    #     )
 
     # use map to build "target" column
     train_data["target"] = train_data[config.datasets.train[0].target_column].map(
@@ -64,22 +64,23 @@ def build_dataloaders(config):
         target_sr=config.data.target_sr,
     )
 
-    train_dataloader = torch.utils.data.DataLoader(
-        train_dataset,
-        batch_size=config.train.batch_size,
-        shuffle=config.train.shuffle,
-        num_workers=config.train.num_workers,
-        pin_memory=True,
-        collate_fn=collate_fn,
-    )
+    # train_dataloader = torch.utils.data.DataLoader(
+    #     train_dataset,
+    #     batch_size=config.train.batch_size,
+    #     shuffle=config.train.shuffle,
+    #     num_workers=config.train.num_workers,
+    #     pin_memory=True,
+    #     collate_fn=collate_fn,
+    # )
 
-    val_dataloader = torch.utils.data.DataLoader(
-        val_dataset,
-        batch_size=config.train.batch_size,
-        shuffle=False,
-        num_workers=config.train.num_workers,
-        pin_memory=True,
-        collate_fn=collate_fn,
-    )
+    # val_dataloader = torch.utils.data.DataLoader(
+    #     val_dataset,
+    #     batch_size=config.train.batch_size,
+    #     shuffle=False,
+    #     num_workers=config.train.num_workers,
+    #     pin_memory=True,
+    #     collate_fn=collate_fn,
+    # )
 
-    return train_dataloader, val_dataloader
+    # return train_dataloader, val_dataloader
+    return train_dataset, val_dataset

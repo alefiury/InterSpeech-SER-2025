@@ -40,7 +40,7 @@ def main() -> None:
 
     config = OmegaConf.load(args.config_path)
 
-    train_dataloader, val_dataloader = build_dataloaders(config)
+    # train_dataloader, val_dataloader = build_dataloaders(config)
 
     exp_title = config.title
 
@@ -82,7 +82,8 @@ def main() -> None:
         default_root_dir=os.path.join(args.checkpoint_dir, config["title"])
     )
 
-    trainer.fit(model, train_dataloader, val_dataloader)
+    # trainer.fit(model, train_dataloader, val_dataloader)
+    trainer.fit(model)
 
 
 if __name__ == "__main__":

@@ -4,11 +4,14 @@ import pytorch_lightning as pl
 import torch.nn.functional as F
 from omegaconf import DictConfig
 from torch.optim import Adam, AdamW
+from transformers import AutoFeatureExtractor
 from lightning.pytorch.utilities import grad_norm
 from torchmetrics import Accuracy, Precision, Recall, F1Score, MetricCollection
 
+from utils.utils import build_dataloaders
 from models.factory import create_ser_model
 from utils.schedulers import CosineWarmupLR, LinearLR
+from utils.dataloader import DynamicCollate, XEUSNestCollate
 
 
 class PLWrapper(pl.LightningModule):
@@ -38,8 +41,67 @@ class PLWrapper(pl.LightningModule):
         self.train_metrics = base_metrics.clone(prefix='train/')
         self.val_metrics = base_metrics.clone(prefix='val/')
 
+    def setup(self, stage: str):
+        # Assign train/val datasets for use in dataloaders
+        if stage == "fit":
+            self.train_dataset, self.val_dataset = build_dataloaders(self.config)
+
+    def train_dataloader(self):
+        """Return the training dataloader."""
+        if self.config.model.model_type.lower() == "xeus" or self.config.model.model_type.lower() == "nest":
+            collate_fn = XEUSNestCollate()
+        else:
+            processor = AutoFeatureExtractor.from_pretrained(config.model.model_name)
+            collate_fn = DynamicCollate(
+                target_sr=self.config.data.target_sr,
+                processor=processor,
+            )
+
+        return torch.utils.data.DataLoader(
+            self.train_dataset,
+            batch_size=self.config.train.batch_size,
+            shuffle=self.config.train.shuffle,
+            num_workers=self.config.train.num_workers,
+            pin_memory=True,
+            collate_fn=collate_fn,
+        )
+
+    def val_dataloader(self):
+        """Return the validation dataloader."""
+        if self.config.model.model_type.lower() == "xeus" or self.config.model.model_type.lower() == "nest":
+            collate_fn = XEUSNestCollate()
+        else:
+            processor = AutoFeatureExtractor.from_pretrained(config.model.model_name)
+            collate_fn = DynamicCollate(
+                target_sr=self.config.data.target_sr,
+                processor=processor,
+            )
+        return torch.utils.data.DataLoader(
+            self.val_dataset,
+            batch_size=self.config.train.batch_size,
+            shuffle=False,
+            num_workers=self.config.train.num_workers,
+            pin_memory=True,
+            collate_fn=collate_fn,
+        )
+
+    def num_training_steps(self) -> int:
+        """Total training steps inferred from datamodule and devices."""
+        dataset = self.train_dataloader()
+        if self.trainer.max_steps and self.trainer.max_steps > 0:
+            return self.trainer.max_steps
+        dataset_size = len(dataset)
+        return dataset_size * self.trainer.max_epochs
+
     def configure_optimizers(self):
         """Configures the optimizer and the learning rate scheduler."""
+        # Start dataloaders to be able to get the number of steps per epoch
+        self.trainer.fit_loop.setup_data()
+
+        max_num_steps = self.num_training_steps()
+
+        print(f"Max number of steps: {max_num_steps}")
+
         opt_params = self.config.optimizer["params"]
         scheduler_params = self.config.scheduler["params"]
 
@@ -68,7 +130,7 @@ class PLWrapper(pl.LightningModule):
             scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
                 optimizer,
                 "min",
-                patience=scheduler_params.get("patience", self.trainer.max_steps*0.25),
+                patience=scheduler_params.get("patience", max_num_steps*0.25),
                 factor=0.9,
                 min_lr=opt_params.get("min_learning_rate", 1.0e-6)
             )
@@ -78,8 +140,8 @@ class PLWrapper(pl.LightningModule):
                 optimizer,
                 lr_min=opt_params.get("min_learning_rate", 1.0e-6),
                 lr_max=opt_params["learning_rate"],
-                warmup=scheduler_params.get("warmup_lr", self.trainer.max_steps*0.05),
-                T_max=self.trainer.max_steps
+                warmup=scheduler_params.get("warmup_lr", max_num_steps*0.05),
+                T_max=max_num_steps,
             )
 
         elif self.config.scheduler.name.lower() == "linearlr":
