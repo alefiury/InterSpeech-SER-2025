@@ -4,6 +4,7 @@ __pycache__/
 *$py.class
 
 wandb/
+ssl_checkpoints/
 InterSpeech-SER-2025/
 
 # C extensions
