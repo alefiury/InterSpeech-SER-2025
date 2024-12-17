@@ -1,17 +1,20 @@
-import torch
 
+import wandb
+import seaborn as sns
+import matplotlib.pyplot as plt
+import torch
 import pytorch_lightning as pl
 import torch.nn.functional as F
 from omegaconf import DictConfig
 from torch.optim import Adam, AdamW
 from transformers import AutoFeatureExtractor
 from lightning.pytorch.utilities import grad_norm
-from torchmetrics import Accuracy, Precision, Recall, F1Score, MetricCollection
+from torchmetrics import Accuracy, Precision, Recall, F1Score, MetricCollection, ConfusionMatrix
 
 from utils.utils import build_dataloaders
 from models.factory import create_ser_model
 from utils.schedulers import CosineWarmupLR, LinearLR
-from utils.dataloader import DynamicCollate, XEUSNestCollate
+from utils.dataloader import DynamicCollate, XEUSNestCollate, EmbeddingCollate
 
 
 class PLWrapper(pl.LightningModule):
@@ -25,7 +28,7 @@ class PLWrapper(pl.LightningModule):
             **config.model
         )
         # When using mixup, we use BCEWithLogitsLoss (because we are working with hot-one-encoded targets)
-        if config.data.mixup_alpha > 0.0:
+        if config.data.get("mixup_alpha", 0.0) > 0.0:
             self.criterion = torch.nn.BCEWithLogitsLoss()
         else:
             self.criterion = torch.nn.CrossEntropyLoss()
@@ -41,6 +44,8 @@ class PLWrapper(pl.LightningModule):
         self.train_metrics = base_metrics.clone(prefix='train/')
         self.val_metrics = base_metrics.clone(prefix='val/')
 
+        self.confusion_matrix = ConfusionMatrix(task="multiclass", num_classes=n_classes)
+
     def setup(self, stage: str):
         # Assign train/val datasets for use in dataloaders
         if stage == "fit":
@@ -50,12 +55,16 @@ class PLWrapper(pl.LightningModule):
         """Return the training dataloader."""
         if self.config.model.model_type.lower() == "xeus" or self.config.model.model_type.lower() == "nest":
             collate_fn = XEUSNestCollate()
-        else:
+        elif self.config.model.model_type.lower() == "dynamic":
             processor = AutoFeatureExtractor.from_pretrained(self.config.model.model_name)
             collate_fn = DynamicCollate(
                 target_sr=self.config.data.target_sr,
                 processor=processor,
             )
+        elif self.config.model.model_type.lower() == "embedding":
+            collate_fn = EmbeddingCollate()
+        else:
+            raise ValueError(f"Invalid model type: {self.config.model.model_type}")
 
         return torch.utils.data.DataLoader(
             self.train_dataset,
@@ -70,12 +79,16 @@ class PLWrapper(pl.LightningModule):
         """Return the validation dataloader."""
         if self.config.model.model_type.lower() == "xeus" or self.config.model.model_type.lower() == "nest":
             collate_fn = XEUSNestCollate()
-        else:
+        elif self.config.model.model_type.lower() == "dynamic":
             processor = AutoFeatureExtractor.from_pretrained(self.config.model.model_name)
             collate_fn = DynamicCollate(
                 target_sr=self.config.data.target_sr,
                 processor=processor,
             )
+        elif self.config.model.model_type.lower() == "embedding":
+            collate_fn = EmbeddingCollate()
+        else:
+            raise ValueError(f"Invalid model type: {self.config.model.model_type}")
         return torch.utils.data.DataLoader(
             self.val_dataset,
             batch_size=self.config.train.batch_size,
@@ -185,7 +198,7 @@ class PLWrapper(pl.LightningModule):
         logits = self.forward(input_features)
         loss = self.criterion(logits, targets)
 
-        if self.config.data.mixup_alpha > 0.0:
+        if self.config.data.get("mixup_alpha", 0.0) > 0.0:
             targets = torch.argmax(targets, dim=1)
 
         # Update and log training metrics
@@ -207,12 +220,37 @@ class PLWrapper(pl.LightningModule):
         # Update and log validation metrics
         metrics = self.val_metrics(logits, targets)
 
-        if self.config.data.mixup_alpha > 0.0:
+        if self.config.data.get("mixup_alpha", 0.0) > 0.0:
             targets = torch.argmax(targets, dim=1)
 
         # Log metrics
         self.log_dict(metrics, on_step=True, on_epoch=True, prog_bar=True, logger=True)
         # Log validation loss
         self.log("val/loss", loss, on_step=True, on_epoch=True, prog_bar=True, logger=True)
+        # Log confusion matrix
+        preds = torch.argmax(logits, dim=1)
+        self.confusion_matrix(preds, targets)
 
         return loss
+
+    def on_validation_epoch_end(self):
+        # Compute the confusion matrix
+        cm = self.confusion_matrix.compute().cpu().numpy()
+        # Reset confusion matrix for the next epoch
+        self.confusion_matrix.reset()
+        # Log confusion matrix as a figure
+        fig = self._plot_confusion_matrix(cm)
+        self.logger.log_image(
+            "val/confusion_matrix",
+            [wandb.Image(fig, caption="Confusion Matrix")],
+            self.current_epoch
+        )
+        plt.close(fig)
+
+    def _plot_confusion_matrix(self, cm):
+        fig, ax = plt.subplots(figsize=(8, 6))
+        sns.heatmap(cm, annot=True, fmt='g', cmap="Blues", ax=ax)
+        ax.set_xlabel("Predicted Labels")
+        ax.set_ylabel("True Labels")
+        ax.set_title("Confusion Matrix")
+        return fig

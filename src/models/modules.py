@@ -344,25 +344,6 @@ class SEREmbeddingModel(SERBaseModel):
         """
         return self.mlp.layers[0].in_features
 
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        """
-        Forward pass of the model.
-
-        Args:
-            x: Input tensor of shape [batch_size, num_feature_layers, sequence_length, feature_dim]
-                Contains pre-extracted features
-
-        Returns:
-            torch.Tensor: Logits for emotion classification
-        """
-        # Get pre-extracted embeddings
-        embeddings = self._get_embeddings(x)
-        embeddings = self._apply_layer_weighting(embeddings)  # [B,T,F]
-        pooled_features = self._apply_pooling(embeddings)  # [B,F] or [B,2F]
-        logits = self.mlp(pooled_features)
-
-        return logits.squeeze(-1)
-
 
 class SERDynamicModel(SERBaseModel):
     """

@@ -45,7 +45,6 @@ def main() -> None:
     exp_title = config.title
 
     tags = ["InterSpeech-SER-2025"]
-    tags += [dataset["name"] for dataset in config.datasets.train]  # add training datasets as tags
     tags += config.tags  # add tags defined for experiments
 
     wandb.init(

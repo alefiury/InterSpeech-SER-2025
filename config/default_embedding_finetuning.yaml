@@ -1,44 +1,37 @@
-title: SER-Dynamic-FineTuning-XEUS-(epochs-${trainer.max_epochs})-(bs-${train.batch_size})-(LR-${optimizer.params.learning_rate})
+title: SER-Embedding-FineTuning-(epochs-${trainer.max_epochs})-(bs-${train.batch_size})-(LR-${optimizer.params.learning_rate})-(LWS${model.layer_weight_strategy})-(PS${model.pooling_strategy})
 
 wandb_entity: alefiury
 
 datasets:
     train:
         - name: Train
-          metadata_path: "/raid/alefiury/SER/InterSpeech2025/challenge_dataset/train-X_and_O_filtered.csv"
-          base_dir: "/raid/alefiury/SER/InterSpeech2025/challenge_dataset/Audios"
-          filename_column: "FileName"
-          target_column: "EmoClass"
+          metadata_path: "/raid/alefiury/SER/InterSpeech2025/hubert_ravdess_train.csv"
+          base_dir: "/raid/alefiury/SER/InterSpeech2025/Audio_Speech_Actors_01-24_hubert"
+          filename_column: "filename"
+          target_column: "emotion"
 
     val:
         - name: Validation
-          metadata_path: "/raid/alefiury/SER/InterSpeech2025/challenge_dataset/val-X_and_O_filtered.csv"
-          base_dir: "/raid/alefiury/SER/InterSpeech2025/challenge_dataset/Audios"
-          filename_column: "FileName"
-          target_column: "EmoClass"
+          metadata_path: "/raid/alefiury/SER/InterSpeech2025/hubert_ravdess_val.csv"
+          base_dir: "/raid/alefiury/SER/InterSpeech2025/Audio_Speech_Actors_01-24_hubert"
+          filename_column: "filename"
+          target_column: "emotion"
 
 data:
     num_classes: 8
 
-    target_sr: 16000
-
-    mixup_alpha: 0.0 # 0.0 to disable
-    use_rand_truncation: false
-    min_duration: 2.0 # min duration (in seconds), only used if use_rand_truncation is True
-    min_white_noise_amp: 0.01 # min amplitude of white noise to be added, only used if insert_white_noise is True
-    max_white_noise_amp: 0.1 # max amplitude of white noise to be added, only used if insert_white_noise is True
-    insert_white_noise: false
+    use_seqaug: false
 
     # label2id must represent the names of the target in the metadata file
     label2id: {
-        "A": 0,
-        "C": 1,
-        "D": 2,
-        "F": 3,
-        "H": 4,
-        "N": 5,
-        "S": 6,
-        "U": 7
+        "neutral": 0,
+        "calm": 1,
+        "happy": 2,
+        "sad": 3,
+        "angry": 4,
+        "fearful": 5,
+        "disgust": 6,
+        "surprised": 7
     }
 
 train:
@@ -47,9 +40,7 @@ train:
     num_workers: 12
 
 model:
-    model_type: "xeus"
-
-    checkpoint_path: "/raid/alefiury/SER/InterSpeech2025/InterSpeech-SER-2025/ssl_checkpoints/XEUS/xeus_checkpoint.pth"
+    model_type: "embedding"
 
     mlp_input_dim: 1024 # Must be adapted to the model
     mlp_hidden_dim: ${model.mlp_input_dim} # Must be adapted to the model, should be the same as mlp_input_dim
@@ -58,11 +49,11 @@ model:
     mlp_dropout: 0.1
     mlp_activation_func: "relu"
     layer_weight_strategy: "per_layer"
-    num_feature_layers: 19 # Must be adapted to the model
+    # layer_weight_strategy: "weighted_sum"
+    num_feature_layers: 25 # Must be adapted to the model
     specific_layer_idx: -1 # Take the last layer
     pooling_strategy: "mean" # Take the mean of the sequence in the last layer
-
-    freeze_backbone: true
+    # pooling_strategy: "attpool"
 
 optimizer:
     name: "adamw"
@@ -79,18 +70,14 @@ scheduler:
         warmup_lr: 500
 
 tags:
+    - ${model.layer_weight_strategy}-LayerWeight
+    - ${model.pooling_strategy}-Pooling
     - ${train.batch_size}-BS
     - LR-${optimizer.params.learning_rate}
     - WD-${optimizer.params.weight_decay}
     - ${model.mlp_input_dim}-AH
     - ${model.mlp_hidden_dim}-HL
     - ${model.mlp_num_layers}-IS
-    - ${model.mlp_dropout}-DO
-    - ${model.mlp_activation_func}-AF
-    - ${model.layer_weight_strategy}-LWS
-    - ${model.num_feature_layers}-NFL
-    - ${model.specific_layer_idx}-SLI
-    - ${model.pooling_strategy}-PS
 
 trainer:
     accelerator: "gpu"

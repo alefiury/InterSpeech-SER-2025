@@ -3,9 +3,9 @@ import random
 from typing import List, Tuple, Dict, Optional
 
 import torch
-import pandas as pd
 import torchaudio
 import numpy as np
+import pandas as pd
 from torch.utils.data import Dataset
 from transformers import WhisperFeatureExtractor
 
@@ -17,17 +17,20 @@ class EmbeddingDataset(Dataset):
         filename_column: str,
         target_column: str,
         base_dir: str,
-        aggregation_strategy: str = "mean",
         use_seqaug: bool = False,
         data_type: str = "train",
     ):
         """Initialization"""
         self.data = data
+
+        # Cache filepaths and targets
+        self.filenames = self.data[filename_column].values
+        self.targets = self.data[target_column].values
+
         self.filename_column = filename_column
         self.target_column = target_column
 
         self.use_seqaug = use_seqaug
-        self.aggregation_strategy = aggregation_strategy
 
         self.base_dir = base_dir
         self.data_type = data_type
@@ -48,35 +51,9 @@ class EmbeddingDataset(Dataset):
         """
         features = torch.load(filepath)
 
-        # print(features.shape)
-
         return features
 
-    def _layer_aggregation_strategy(self, features: torch.Tensor, strategy: str = "mean") -> torch.Tensor:
-        """Aggregate the layers of the audio tensor
-
-        Params:
-
-        features (torch.Tensor): Audio tensor
-        strategy (str): Aggregation strategy
-
-        Returns:
-
-        torch.Tensor: Aggregated audio tensor
-        """
-
-        if strategy == "mean":
-            features = features.mean(dim=1)
-        elif strategy == "max":
-            features = features.max(dim=1)
-        elif strategy == "min":
-            features = features.min(dim=1)
-        elif strategy == "sum":
-            features = features.sum(dim=1)
-
-        return features
-
-    def seqaug(self, input_tensor, alpha=0.2):
+    def seqaug(self, input_tensor, alpha: float = 0.2):
         """
         Applies SeqAug (https://arxiv.org/abs/2305.01954) augmentation to the input tensor.
 
@@ -123,23 +100,54 @@ class EmbeddingDataset(Dataset):
 
         Dict[torch.Tensor, np.ndarray]: A dictionary containing the audio and the caption
         """
-        filename = self.data.iloc[index][self.filename_column][:-4] + ".pt"
+        filename = self.filenames[index]
         filepath = os.path.join(self.base_dir, filename)
 
-        target = self.data.iloc[index][self.target_column]
+        target = self.targets[index]
 
         features = self._load_file(filepath)
-
-        features = self._layer_aggregation_strategy(features, self.aggregation_strategy)
 
         if self.use_seqaug and self.data_type == "train":
             features = self.seqaug(features)
 
         # Convert features to float
         features = features.float()
-        target = torch.tensor(target).float()
 
         return features, target
+
+
+class EmbeddingCollate:
+    def __init__(
+        self,
+        padding_value: float = 0.0,
+    ):
+        """
+        Collation function for dynamic batching of audio data.
+
+        Params:
+            padding_value (float): Value to use for padding shorter sequences.
+        """
+        self.padding_value = padding_value
+
+    def __call__(self, batch: List[Tuple[torch.Tensor, torch.Tensor]]) -> Tuple[torch.Tensor, Optional[torch.Tensor]]:
+        features, targets = zip(*batch)
+        batch_size = len(features)
+        num_layers = features[0].shape[0]
+        feature_dim = features[0].shape[-1]
+
+        features = list(features)
+        targets = torch.stack([t if isinstance(t, torch.Tensor) else torch.tensor(t) for t in targets])
+
+        lengths = [feature.shape[1] for feature in features]
+        max_length = max(lengths)
+
+        padded_features = torch.full((batch_size, num_layers, max_length, feature_dim), self.padding_value)
+
+        for i, feature in enumerate(features):
+            length = feature.shape[1]
+            padded_features[i, :, :length, :] = feature
+
+        return padded_features, targets
 
 
 class DynamicDataset(Dataset):
@@ -266,13 +274,16 @@ class DynamicDataset(Dataset):
             audio, _ = self._load_wav(filepath)
             target = main_target
 
+        # One-hot encoding for the target if using mixup in eval mode
         if self.mixup_alpha > 0.0 and self.data_type != "train":
             target = torch.zeros(self.class_num)
             target[main_target] = 1.0
 
+        # Random Truncation
         if self.use_rand_truncation and self.data_type == "train":
             audio = self._random_truncation(audio)
 
+        # White noise insertion
         if self.insert_white_noise and self.data_type == "train":
             # dynamically insert white noise
             white_noise_amp = torch.rand(1) * (self.max_white_noise_amp - self.min_white_noise_amp) + self.min_white_noise_amp
