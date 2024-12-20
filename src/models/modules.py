@@ -181,14 +181,16 @@ class SERBaseModel(nn.Module, ABC):
         else:
             raise ValueError(f"Invalid layer weight strategy: {layer_weight_strategy}")
 
-        # Validate pooling_strategy
-        # attpool is only allowed for per_layer
         if pooling_strategy not in ["mean", "attpool"]:
             raise ValueError(
                 f"Invalid pooling strategy: {pooling_strategy}. Choose 'mean' or 'attpool'."
             )
 
-        self.attpool = None
+        if pooling_strategy == "attpool":
+            # AttentiveStatisticsPooling requires initialization once we know F
+            # Which is half of the MLP input dimension because we concatenate mean and std
+            # Consider that mlp_input_dim is always equal to the F dimension of the embeddings
+            self.attpool = AttentiveStatisticsPooling(input_size=int(mlp_input_dim/2))
 
     def _weighted_sum(self, x: torch.Tensor) -> torch.Tensor:
         """
@@ -258,11 +260,7 @@ class SERBaseModel(nn.Module, ABC):
             return embeddings.mean(dim=1)  # [B,F]
 
         elif self.pooling_strategy == "attpool":
-            # AttentiveStatisticsPooling requires initialization once we know F
-            input_dim = embeddings.size(-1)
-            self.attpool = AttentiveStatisticsPooling(input_size=input_dim).to(embeddings.device)
             return self.attpool(embeddings)
-
         else:
             raise ValueError(f"Invalid pooling strategy: {self.pooling_strategy}")
 
@@ -373,14 +371,16 @@ class SERLastLayerEmbeddingModel(nn.Module):
         )
 
         self.pooling_strategy = pooling_strategy
-        # Validate pooling_strategy
-        # attpool is only allowed for per_layer
         if pooling_strategy not in ["mean", "attpool"]:
             raise ValueError(
                 f"Invalid pooling strategy: {pooling_strategy}. Choose 'mean' or 'attpool'."
             )
 
-        self.attpool = None
+        if pooling_strategy == "attpool":
+            # AttentiveStatisticsPooling requires initialization once we know F
+            # Which is half of the MLP input dimension because we concatenate mean and std
+            # Consider that mlp_input_dim is always equal to the F dimension of the embeddings
+            self.attpool = AttentiveStatisticsPooling(input_size=int(mlp_input_dim/2))
 
     def _apply_pooling(self, embeddings: torch.Tensor) -> torch.Tensor:
         """
@@ -393,11 +393,7 @@ class SERLastLayerEmbeddingModel(nn.Module):
             return embeddings.mean(dim=1)  # [B,F]
 
         elif self.pooling_strategy == "attpool":
-            # AttentiveStatisticsPooling requires initialization once we know F
-            input_dim = embeddings.size(-1)
-            self.attpool = AttentiveStatisticsPooling(input_size=input_dim).to(embeddings.device)
             return self.attpool(embeddings)
-
         else:
             raise ValueError(f"Invalid pooling strategy: {self.pooling_strategy}")
 

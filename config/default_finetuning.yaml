@@ -54,7 +54,7 @@ model:
     # model_name: "facebook/hubert-large-ls960-ft"
     # model_name: "openai/whisper-large"
 
-    mlp_input_dim: 1024 # Must be adapted to the model
+    mlp_input_dim: 1024 # Must be adapted to the model, when using attention pooling, this value should be the double of the model hidden size
     mlp_hidden_dim: ${model.mlp_input_dim} # Must be adapted to the model, should be the same as mlp_input_dim
     mlp_num_layers: 1
     mlp_output_size: ${data.num_classes}
