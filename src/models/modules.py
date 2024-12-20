@@ -345,6 +345,70 @@ class SEREmbeddingModel(SERBaseModel):
         return self.mlp.layers[0].in_features
 
 
+class SERLastLayerEmbeddingModel(nn.Module):
+    """
+    Base Model for SER that handles:
+    - MLP initialization
+    - Pooling strategy: 'mean' or 'attpool' (attpool only with per_layer)
+    """
+
+    def __init__(
+        self,
+        mlp_input_dim: int = 768,
+        mlp_hidden_dim: int = 1024,
+        mlp_num_layers: int = 2,
+        mlp_output_size: int = 7,
+        mlp_dropout: float = 0.1,
+        mlp_activation_func: str = "relu",
+        pooling_strategy: str = "mean", # "mean" or "attpool"
+    ):
+        super().__init__()
+        self.mlp = MLPBase(
+            input_size=mlp_input_dim,
+            hidden_dim=mlp_hidden_dim,
+            num_layers=mlp_num_layers,
+            output_size=mlp_output_size,
+            dropout=mlp_dropout,
+            activation_func=mlp_activation_func,
+        )
+
+        self.pooling_strategy = pooling_strategy
+        # Validate pooling_strategy
+        # attpool is only allowed for per_layer
+        if pooling_strategy not in ["mean", "attpool"]:
+            raise ValueError(
+                f"Invalid pooling strategy: {pooling_strategy}. Choose 'mean' or 'attpool'."
+            )
+
+        self.attpool = None
+
+    def _apply_pooling(self, embeddings: torch.Tensor) -> torch.Tensor:
+        """
+        Apply pooling over the time dimension.
+        embeddings: [B,T,F]
+        mask: [B,T] if attpool selected
+        """
+        if self.pooling_strategy == "mean":
+            # Mean pooling over T
+            return embeddings.mean(dim=1)  # [B,F]
+
+        elif self.pooling_strategy == "attpool":
+            # AttentiveStatisticsPooling requires initialization once we know F
+            input_dim = embeddings.size(-1)
+            self.attpool = AttentiveStatisticsPooling(input_size=input_dim).to(embeddings.device)
+            return self.attpool(embeddings)
+
+        else:
+            raise ValueError(f"Invalid pooling strategy: {self.pooling_strategy}")
+
+    def forward(self, embeddings: torch.Tensor) -> torch.Tensor:
+        # Apply pooling
+        logits_input = self._apply_pooling(embeddings) # [B, F] or [B,2*F]
+        # MLP classification
+        logits = self.mlp(logits_input)
+        return logits
+
+
 class SERDynamicModel(SERBaseModel):
     """
     Uses a pretrained backbone (e.g. WavLM).

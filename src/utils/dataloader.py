@@ -150,6 +150,99 @@ class EmbeddingCollate:
         return padded_features, targets
 
 
+class LastLayerEmbeddingDataset(Dataset):
+    def __init__(
+        self,
+        data: pd.DataFrame,
+        filename_column: str,
+        target_column: str,
+        base_dir: str,
+    ):
+        """Initialization"""
+        self.data = data
+
+        # Cache filepaths and targets
+        self.filenames = self.data[filename_column].values
+        self.targets = self.data[target_column].values
+
+        self.filename_column = filename_column
+        self.target_column = target_column
+
+        self.base_dir = base_dir
+
+    def __len__(self):
+        return len(self.data)
+
+    def _load_file(self, filepath: str) -> torch.Tensor:
+        """Load an audio file
+
+        Params:
+
+        filepath (str): Path to the audio file
+
+        Returns:
+
+        torch.Tensor: Audio tensor
+        """
+        features = torch.load(filepath)
+        return features
+
+    def __getitem__(self, index: int) -> Tuple[torch.Tensor, List[str]]:
+        """Get an item from the dataset
+
+        Params:
+
+        index (int): Index of the item to get
+
+        Returns:
+
+        Dict[torch.Tensor, np.ndarray]: A dictionary containing the audio and the caption
+        """
+        filename = self.filenames[index]
+        filepath = os.path.join(self.base_dir, filename)
+
+        target = self.targets[index]
+
+        features = self._load_file(filepath)
+
+        # Convert features to float
+        features = features.float()
+
+        return features, target
+
+
+class LastLayerEmbeddingCollate:
+    def __init__(self, padding_value: float = 0.0):
+        self.padding_value = padding_value
+
+    def __call__(
+        self,
+        batch: List[Tuple[torch.Tensor, torch.Tensor]]
+    ) -> Tuple[torch.Tensor, Optional[torch.Tensor]]:
+
+        features, targets = zip(*batch)
+        targets = torch.stack([torch.as_tensor(t) for t in targets])
+
+        processed_features = []
+        for feature in features:
+            # Only check and fix shape if it's (1, T, F)
+            if feature.dim() == 3 and feature.shape[0] == 1:
+                feature = feature.squeeze(0)  # (T, F)
+            processed_features.append(feature)
+
+        features = processed_features
+        lengths = [f.shape[0] for f in features]
+        max_length = max(lengths)
+
+        feature_dim = features[0].shape[-1]
+
+        padded_features = torch.full((len(features), max_length, feature_dim), self.padding_value)
+        for i, f in enumerate(features):
+            padded_features[i, :f.shape[0]] = f
+
+        return padded_features, targets
+
+
 class DynamicDataset(Dataset):
     def __init__(
         self,

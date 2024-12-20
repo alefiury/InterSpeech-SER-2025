@@ -3,6 +3,7 @@ import pandas as pd
 from utils.dataloader import (
     DynamicDataset,
     EmbeddingDataset,
+    LastLayerEmbeddingDataset,
 )
 
 
@@ -46,7 +47,20 @@ def build_dataloaders(config):
             base_dir=config.datasets.train[0].base_dir,
             data_type="val",
         )
+    if config.model.model_type.lower() == "last_layer_embedding":
+        train_dataset = LastLayerEmbeddingDataset(
+            data=train_data,
+            filename_column=config.datasets.train[0].filename_column,
+            target_column="target",
+            base_dir=config.datasets.train[0].base_dir,
+        )
 
+        val_dataset = LastLayerEmbeddingDataset(
+            data=val_data,
+            filename_column=config.datasets.train[0].filename_column,
+            target_column="target",
+            base_dir=config.datasets.train[0].base_dir,
+        )
     else:
         train_dataset = DynamicDataset(
             data=train_data,

@@ -14,7 +14,12 @@ from torchmetrics import Accuracy, Precision, Recall, F1Score, MetricCollection,
 from utils.utils import build_dataloaders
 from models.factory import create_ser_model
 from utils.schedulers import CosineWarmupLR, LinearLR
-from utils.dataloader import DynamicCollate, XEUSNestCollate, EmbeddingCollate
+from utils.dataloader import (
+    DynamicCollate,
+    XEUSNestCollate,
+    EmbeddingCollate,
+    LastLayerEmbeddingCollate
+)
 
 
 class PLWrapper(pl.LightningModule):
@@ -63,6 +68,8 @@ class PLWrapper(pl.LightningModule):
             )
         elif self.config.model.model_type.lower() == "embedding":
             collate_fn = EmbeddingCollate()
+        elif self.config.model.model_type.lower() == "last_layer_embedding":
+            collate_fn = LastLayerEmbeddingCollate()
         else:
             raise ValueError(f"Invalid model type: {self.config.model.model_type}")
 
@@ -87,6 +94,8 @@ class PLWrapper(pl.LightningModule):
             )
         elif self.config.model.model_type.lower() == "embedding":
             collate_fn = EmbeddingCollate()
+        elif self.config.model.model_type.lower() == "last_layer_embedding":
+            collate_fn = LastLayerEmbeddingCollate()
         else:
             raise ValueError(f"Invalid model type: {self.config.model.model_type}")
         return torch.utils.data.DataLoader(

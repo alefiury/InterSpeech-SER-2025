@@ -2,6 +2,7 @@ from models.modules import (
     SERBaseModel,
     SEREmbeddingModel,
     SERDynamicModel,
+    SERLastLayerEmbeddingModel,
     XEUSModel,
     NESTModel
 )
@@ -20,6 +21,8 @@ def create_ser_model(
         return SERDynamicModel(**kwargs)
     elif model_type.lower() == "embedding":
         return SEREmbeddingModel(**kwargs)
+    elif model_type.lower() == "last_layer_embedding":
+        return SERLastLayerEmbeddingModel(**kwargs)
     elif model_type.lower() == "xeus":
         return XEUSModel(**kwargs)
     elif model_type.lower() == "nest":

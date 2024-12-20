@@ -3,14 +3,12 @@ import argparse
 from pprint import pprint
 
 import wandb
-import torch
 import pytorch_lightning as pl
 from omegaconf import OmegaConf
-from pytorch_lightning.callbacks import ModelCheckpoint, LearningRateMonitor
 from pytorch_lightning.loggers import WandbLogger
+from pytorch_lightning.callbacks import ModelCheckpoint, LearningRateMonitor
 
 from models.pl_wrapper import PLWrapper
-from utils.utils import build_dataloaders
 
 
 def main() -> None:
@@ -39,8 +37,6 @@ def main() -> None:
     args = parser.parse_args()
 
     config = OmegaConf.load(args.config_path)
-
-    # train_dataloader, val_dataloader = build_dataloaders(config)
 
     exp_title = config.title
 
@@ -81,7 +77,6 @@ def main() -> None:
         default_root_dir=os.path.join(args.checkpoint_dir, config["title"])
     )
 
-    # trainer.fit(model, train_dataloader, val_dataloader)
     trainer.fit(model)
 
 
