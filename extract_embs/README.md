@@ -1,4 +1,4 @@
-# Feature Extraction
+# Multilayer Feature Extraction
 
 This script extracts embeddings from audio files using SSL speech models. It allows you to specify the base directory, input directory, output directory, and model name for the extraction process.
 
