@@ -113,7 +113,15 @@ class PLWrapper(pl.LightningModule):
         if self.trainer.max_steps and self.trainer.max_steps > 0:
             return self.trainer.max_steps
         dataset_size = len(dataset)
-        return dataset_size * self.trainer.max_epochs
+
+        # In PyTorch Lightning >= 2.0, trainer.num_devices returns how many devices
+        # (GPUs/TPUs/CPUs) the trainer is using.
+        gpu_count = self.trainer.num_devices if self.trainer.num_devices else 1
+
+        print("="*100)
+        print(f"Dataset size: {dataset_size} | GPU count: {gpu_count}")
+
+        return (dataset_size // gpu_count) * self.trainer.max_epochs
 
     def configure_optimizers(self):
         """Configures the optimizer and the learning rate scheduler."""

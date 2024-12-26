@@ -1,4 +1,4 @@
-title: SER-Dynamic-FineTuning-XEUS-(epochs-${trainer.max_epochs})-(bs-${train.batch_size})-(LR-${optimizer.params.learning_rate})
+title: SER-Dynamic-FineTuning-XEUS-(LayerStrategy-${model.layer_weight_strategy})-(PoolStrategy-${model.pooling_strategy})-(FreezeBackbone-${model.freeze_backbone})-(epochs-${trainer.max_epochs})-(bs-${train.batch_size})-(LR-${optimizer.params.learning_rate})
 
 wandb_entity: alefiury
 
@@ -107,6 +107,7 @@ model_checkpoint:
     mode: "max"
     save_last: true
     save_weights_only: true
+    save_top_k: 3
     monitor: "val/f1-score"
     dirpath: "../checkpoints/ser-2025"
     filename: "{epoch:02d}-{step:02d}-{val/f1-score:.4f}"
