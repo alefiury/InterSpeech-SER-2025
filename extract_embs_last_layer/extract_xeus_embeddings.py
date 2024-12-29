@@ -35,9 +35,9 @@ def extract_xeus_embeddings(
     model = load_model()
     for filepath in tqdm(filelist, desc="Extracting embeddings"):
         # Load audio file
-        if not exists(filepath):
-            print("file {} doesnt exist!".format(filepath))
-            continue
+        # if not exists(filepath):
+        #     print("file {} doesnt exist!".format(filepath))
+        #     continue
 
         # Determine the relative path structure
         rel_path = relpath(filepath, input_dir)

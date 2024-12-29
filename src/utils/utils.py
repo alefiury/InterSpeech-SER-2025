@@ -1,3 +1,4 @@
+import torch
 import pandas as pd
 
 from utils.dataloader import (
@@ -90,3 +91,22 @@ def build_dataloaders(config):
         )
 
     return train_dataset, val_dataset
+
+
+def get_classes_weights(config):
+    train_data = pd.read_csv(config.datasets.train[0].metadata_path)
+    # use map to build "target" column
+    train_data["target"] = train_data[config.datasets.train[0].target_column].map(
+        config.data.label2id
+    )
+    # Calculate class weights
+    class_counts = train_data["target"].value_counts().to_dict()
+    total_samples = len(train_data)
+    class_weights = {cls: total_samples / count for cls, count in class_counts.items()}
+    # sort class weights by class id
+    class_weights = {k: v for k, v in sorted(class_weights.items(), key=lambda item: item[0])}
+    # take only the values
+    class_weights = list(class_weights.values())
+
+    class_weights = torch.tensor(class_weights).float()
+    return class_weights

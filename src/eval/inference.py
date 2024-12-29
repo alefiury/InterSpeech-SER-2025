@@ -88,12 +88,12 @@ def build_dataloaders(
             class_num=config.data.num_classes,
             target_sr=config.data.target_sr,
         )
-        if self.config.model.model_type.lower() == "xeus" or self.config.model.model_type.lower() == "nest":
+        if config.model.model_type.lower() == "xeus" or config.model.model_type.lower() == "nest":
             collate_fn = XEUSNestCollate()
-        elif self.config.model.model_type.lower() == "dynamic":
-            processor = AutoFeatureExtractor.from_pretrained(self.config.model.model_name)
+        elif config.model.model_type.lower() == "dynamic":
+            processor = AutoFeatureExtractor.from_pretrained(config.model.model_name)
             collate_fn = DynamicCollate(
-                target_sr=self.config.data.target_sr,
+                target_sr=config.data.target_sr,
                 processor=processor,
             )
 

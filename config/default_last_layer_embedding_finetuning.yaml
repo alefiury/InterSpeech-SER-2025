@@ -1,21 +1,27 @@
-title: SER-LastLayer-Embedding-FineTuning-(epochs-${trainer.max_epochs})-(bs-${train.batch_size})-(LR-${optimizer.params.learning_rate})-(PS${model.pooling_strategy})
+title: SER-LastLayer-Embedding-FineTuning-xls-r-1b-(PoolStrategy-${model.pooling_strategy})-(Loss-${loss.name}-${loss.use_weighted_loss})-(epochs-${trainer.max_epochs})-(bs-${train.batch_size})-(LR-${optimizer.params.learning_rate})-(PS${model.pooling_strategy})
 
 wandb_entity: alefiury
+
+loss:
+    name: "ce"
+    gamma: 2.0
+    alpha: 0.5
+    use_weighted_loss: false
 
 datasets:
     train:
         - name: Train
-          metadata_path: "/raid/alefiury/SER/InterSpeech2025/wavlm_ravdess_train.csv"
-          base_dir: "/raid/alefiury/SER/InterSpeech2025/Audio_Speech_Actors_01-24_wavlm_last_layer"
-          filename_column: "filename"
-          target_column: "emotion"
+          metadata_path: "/raid/alefiury/SER/InterSpeech2025/challenge_dataset/metadatas/xeus/train_set.csv"
+          base_dir: "/raid/alefiury/SER/InterSpeech2025/challenge_dataset/xls-r-1b"
+          filename_column: "FileName"
+          target_column: "EmoClass"
 
     val:
         - name: Validation
-          metadata_path: "/raid/alefiury/SER/InterSpeech2025/wavlm_ravdess_val.csv"
-          base_dir: "/raid/alefiury/SER/InterSpeech2025/Audio_Speech_Actors_01-24_wavlm_last_layer"
-          filename_column: "filename"
-          target_column: "emotion"
+          metadata_path: "/raid/alefiury/SER/InterSpeech2025/challenge_dataset/metadatas/xeus/validation_set.csv"
+          base_dir: "/raid/alefiury/SER/InterSpeech2025/challenge_dataset/xls-r-1b"
+          filename_column: "FileName"
+          target_column: "EmoClass"
 
 data:
     num_classes: 8
@@ -24,14 +30,14 @@ data:
 
     # label2id must represent the names of the target in the metadata file
     label2id: {
-        "neutral": 0,
-        "calm": 1,
-        "happy": 2,
-        "sad": 3,
-        "angry": 4,
-        "fearful": 5,
-        "disgust": 6,
-        "surprised": 7
+        "A": 0,
+        "C": 1,
+        "D": 2,
+        "F": 3,
+        "H": 4,
+        "N": 5,
+        "S": 6,
+        "U": 7
     }
 
 train:
@@ -42,8 +48,9 @@ train:
 model:
     model_type: "last_layer_embedding"
 
-    mlp_input_dim: 1024 # Must be adapted to the model
+    # mlp_input_dim: 1024 # Must be adapted to the model
     # mlp_input_dim: 2048 # attpool version
+    mlp_input_dim: 1280 # Must be adapted to the model
     mlp_hidden_dim: ${model.mlp_input_dim} # Must be adapted to the model, should be the same as mlp_input_dim
     mlp_num_layers: 1
     mlp_output_size: ${data.num_classes}
@@ -77,7 +84,7 @@ tags:
 
 trainer:
     accelerator: "gpu"
-    max_epochs: 100
+    max_epochs: 20
     num_sanity_val_steps: 2
     overfit_batches: 0.0
     log_every_n_steps: 10

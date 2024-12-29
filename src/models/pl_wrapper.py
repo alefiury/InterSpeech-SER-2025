@@ -11,7 +11,13 @@ from transformers import AutoFeatureExtractor
 from lightning.pytorch.utilities import grad_norm
 from torchmetrics import Accuracy, Precision, Recall, F1Score, MetricCollection, ConfusionMatrix
 
-from utils.utils import build_dataloaders
+# backward compatibility
+try:
+    from kornia.losses import FocalLoss
+except ImportError:
+    FocalLoss = None
+
+from utils.utils import build_dataloaders, get_classes_weights
 from models.factory import create_ser_model
 from utils.schedulers import CosineWarmupLR, LinearLR
 from utils.dataloader import (
@@ -32,11 +38,6 @@ class PLWrapper(pl.LightningModule):
         self.model = create_ser_model(
             **config.model
         )
-        # When using mixup, we use BCEWithLogitsLoss (because we are working with hot-one-encoded targets)
-        if config.data.get("mixup_alpha", 0.0) > 0.0:
-            self.criterion = torch.nn.BCEWithLogitsLoss()
-        else:
-            self.criterion = torch.nn.CrossEntropyLoss()
 
         n_classes = config.data.num_classes
         base_metrics = MetricCollection({
@@ -55,6 +56,36 @@ class PLWrapper(pl.LightningModule):
         # Assign train/val datasets for use in dataloaders
         if stage == "fit":
             self.train_dataset, self.val_dataset = build_dataloaders(self.config)
+
+            # Backward compatibility with previous config versions
+            if "loss" not in self.config:
+                self.config.loss = {}
+
+            # When using mixup, we use BCEWithLogitsLoss (because we are working with hot-one-encoded targets)
+            if self.config.data.get("mixup_alpha", 0.0) > 0.0:
+                self.criterion = torch.nn.BCEWithLogitsLoss()
+            else:
+                if self.config.loss.get("use_weighted_loss", False):
+                    print("Using weighted loss")
+                    weights = get_classes_weights(self.config).to(self.device)
+                else:
+                    weights = None
+                print(f"Weights: {weights}", self.device)
+                if self.config.loss.get("name", "ce").lower() == "ce":
+                    print("Using CrossEntropyLoss")
+                    self.criterion = torch.nn.CrossEntropyLoss(
+                        weight=weights
+                    )
+                elif self.config.loss.get("name", "ce").lower() == "focal":
+                    print("Using Focal Loss")
+                    self.criterion = FocalLoss(
+                        alpha=self.config.loss.get("alpha", 0.5),
+                        gamma=self.config.loss.get("gamma", 2.0),
+                        reduction="mean",
+                        weight=weights
+                    )
+                else:
+                    raise ValueError(f"Invalid loss: {self.config.loss.name}")
 
     def train_dataloader(self):
         """Return the training dataloader."""
