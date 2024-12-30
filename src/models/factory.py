@@ -3,6 +3,7 @@ from models.modules import (
     SEREmbeddingModel,
     SERDynamicModel,
     SERLastLayerEmbeddingModel,
+    SERDynamicAudioTextModel,
     XEUSModel,
     NESTModel
 )
@@ -19,6 +20,8 @@ def create_ser_model(
     """
     if model_type.lower() == "dynamic":
         return SERDynamicModel(**kwargs)
+    elif model_type.lower() == "dynamic_audio_text":
+        return SERDynamicAudioTextModel(**kwargs)
     elif model_type.lower() == "embedding":
         return SEREmbeddingModel(**kwargs)
     elif model_type.lower() == "last_layer_embedding":

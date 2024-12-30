@@ -3,6 +3,7 @@ import pandas as pd
 
 from utils.dataloader import (
     DynamicDataset,
+    DynamicAudioTextDataset,
     EmbeddingDataset,
     LastLayerEmbeddingDataset,
 )
@@ -62,7 +63,9 @@ def build_dataloaders(config):
             target_column="target",
             base_dir=config.datasets.train[0].base_dir,
         )
-    else:
+    elif config.model.model_type.lower() == "dynamic" \
+            or config.model.model_type.lower() == "nest" \
+            or config.model.model_type.lower() == "xeus":
         train_dataset = DynamicDataset(
             data=train_data,
             filename_column=config.datasets.train[0].filename_column,
@@ -82,6 +85,35 @@ def build_dataloaders(config):
         val_dataset = DynamicDataset(
             data=val_data,
             filename_column=config.datasets.train[0].filename_column,
+            target_column="target",
+            base_dir=config.datasets.train[0].base_dir,
+            mixup_alpha=config.data.mixup_alpha,
+            data_type="val",
+            class_num=config.data.num_classes,
+            target_sr=config.data.target_sr,
+        )
+    elif config.model.model_type.lower() == "dynamic_audio_text":
+        train_dataset = DynamicAudioTextDataset(
+            data=train_data,
+            filename_column=config.datasets.train[0].filename_column,
+            transcript_column=config.datasets.train[0].transcript_column,
+            target_column="target",
+            base_dir=config.datasets.train[0].base_dir,
+            mixup_alpha=config.data.mixup_alpha,
+            use_rand_truncation=config.data.use_rand_truncation,
+            min_duration=config.data.min_duration,
+            insert_white_noise=config.data.insert_white_noise,
+            min_white_noise_amp=config.data.min_white_noise_amp,
+            max_white_noise_amp=config.data.max_white_noise_amp,
+            data_type="train",
+            class_num=config.data.num_classes,
+            target_sr=config.data.target_sr,
+        )
+
+        val_dataset = DynamicAudioTextDataset(
+            data=val_data,
+            filename_column=config.datasets.train[0].filename_column,
+            transcript_column=config.datasets.train[0].transcript_column,
             target_column="target",
             base_dir=config.datasets.train[0].base_dir,
             mixup_alpha=config.data.mixup_alpha,

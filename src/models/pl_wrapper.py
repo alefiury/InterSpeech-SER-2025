@@ -7,7 +7,7 @@ import pytorch_lightning as pl
 import torch.nn.functional as F
 from omegaconf import DictConfig
 from torch.optim import Adam, AdamW
-from transformers import AutoFeatureExtractor
+from transformers import AutoTokenizer, AutoFeatureExtractor
 from lightning.pytorch.utilities import grad_norm
 from torchmetrics import Accuracy, Precision, Recall, F1Score, MetricCollection, ConfusionMatrix
 
@@ -22,6 +22,7 @@ from models.factory import create_ser_model
 from utils.schedulers import CosineWarmupLR, LinearLR
 from utils.dataloader import (
     DynamicCollate,
+    DynamicAudioTextCollate,
     XEUSNestCollate,
     EmbeddingCollate,
     LastLayerEmbeddingCollate
@@ -97,6 +98,14 @@ class PLWrapper(pl.LightningModule):
                 target_sr=self.config.data.target_sr,
                 processor=processor,
             )
+        elif self.config.model.model_type.lower() == "dynamic_audio_text":
+            processor = AutoFeatureExtractor.from_pretrained(self.config.model.audio_model_name)
+            text_tokenizer = AutoTokenizer.from_pretrained(self.config.model.text_model_name)
+            collate_fn = DynamicAudioTextCollate(
+                target_sr=self.config.data.target_sr,
+                processor=processor,
+                text_tokenizer=text_tokenizer,
+            )
         elif self.config.model.model_type.lower() == "embedding":
             collate_fn = EmbeddingCollate()
         elif self.config.model.model_type.lower() == "last_layer_embedding":
@@ -122,6 +131,14 @@ class PLWrapper(pl.LightningModule):
             collate_fn = DynamicCollate(
                 target_sr=self.config.data.target_sr,
                 processor=processor,
+            )
+        elif self.config.model.model_type.lower() == "dynamic_audio_text":
+            processor = AutoFeatureExtractor.from_pretrained(self.config.model.audio_model_name)
+            text_tokenizer = AutoTokenizer.from_pretrained(self.config.model.text_model_name)
+            collate_fn = DynamicAudioTextCollate(
+                target_sr=self.config.data.target_sr,
+                processor=processor,
+                text_tokenizer=text_tokenizer,
             )
         elif self.config.model.model_type.lower() == "embedding":
             collate_fn = EmbeddingCollate()
