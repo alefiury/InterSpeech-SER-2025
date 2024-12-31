@@ -1,4 +1,5 @@
 import os
+import json
 import argparse
 from pprint import pprint
 
@@ -6,6 +7,7 @@ import wandb
 import pytorch_lightning as pl
 from omegaconf import OmegaConf
 from pytorch_lightning.loggers import WandbLogger
+from lightning.pytorch.strategies import DDPStrategy, FSDPStrategy
 from pytorch_lightning.callbacks import ModelCheckpoint, LearningRateMonitor
 
 from models.pl_wrapper import PLWrapper
@@ -25,6 +27,14 @@ def main() -> None:
         "--gpu",
         default=0,
         type=int
+    )
+    # Only use this argument if you want to use multiple GPUs with DDP
+    parser.add_argument(
+        "-gpus",
+        "--gpus",
+        required=False,
+        type=json.loads,
+        default=None
     )
     parser.add_argument(
         "-ck",
@@ -69,13 +79,25 @@ def main() -> None:
 
     pprint(model)
 
-    trainer = pl.Trainer(
-        **config["trainer"],
-        logger=logger,
-        callbacks=callbacks,
-        devices=[args.gpu],
-        default_root_dir=os.path.join(args.checkpoint_dir, config["title"])
-    )
+    if args.gpus is not None:
+        print("Using multiple GPUs!")
+        print(type(args.gpus), args.gpus)
+        trainer = pl.Trainer(
+            **config["trainer"],
+            logger=logger,
+            callbacks=callbacks,
+            devices=args.gpus,
+            strategy="ddp",
+            default_root_dir=os.path.join(args.checkpoint_dir, config["title"])
+        )
+    else:
+        trainer = pl.Trainer(
+            **config["trainer"],
+            logger=logger,
+            callbacks=callbacks,
+            devices=[args.gpu],
+            default_root_dir=os.path.join(args.checkpoint_dir, config["title"])
+        )
 
     trainer.fit(model)
 

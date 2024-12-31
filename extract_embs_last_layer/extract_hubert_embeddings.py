@@ -7,7 +7,7 @@ from os.path import exists, basename, join, relpath, dirname
 import pandas as pd
 from tqdm import tqdm
 import torch, torchaudio
-from transformers import Wav2Vec2Processor, HubertModel
+from transformers import Wav2Vec2Processor, AutoFeatureExtractor, HubertModel
 
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -23,9 +23,10 @@ def load_model(model_name: str = "hubert-large-ls960-ft") -> Tuple[HubertModel, 
         model_path = "facebook/hubert-xlarge-ll60k"
     elif (model_name == "hubert-xlarge-ls960-ft"):
         model_path = "facebook/hubert-xlarge-ls960-ft" # Finetuned version
-    processor = Wav2Vec2Processor.from_pretrained(model_path)
+    processor = AutoFeatureExtractor.from_pretrained(model_path)
     model = HubertModel.from_pretrained(model_path)
     model.eval()
+    model = model.to(device)
     return model, processor
 
 

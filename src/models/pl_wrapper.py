@@ -7,15 +7,23 @@ import pytorch_lightning as pl
 import torch.nn.functional as F
 from omegaconf import DictConfig
 from torch.optim import Adam, AdamW
-from transformers import AutoFeatureExtractor
+from transformers import AutoTokenizer, AutoFeatureExtractor
 from lightning.pytorch.utilities import grad_norm
 from torchmetrics import Accuracy, Precision, Recall, F1Score, MetricCollection, ConfusionMatrix
 
-from utils.utils import build_dataloaders
+# backward compatibility
+try:
+    from kornia.losses import FocalLoss
+except ImportError:
+    FocalLoss = None
+
+from utils.utils import build_dataloaders, get_classes_weights
 from models.factory import create_ser_model
 from utils.schedulers import CosineWarmupLR, LinearLR
 from utils.dataloader import (
     DynamicCollate,
+    DynamicAudioTextCollate,
+    DynamicAudioTextSpeakerEmbCollate,
     XEUSNestCollate,
     EmbeddingCollate,
     LastLayerEmbeddingCollate
@@ -32,11 +40,6 @@ class PLWrapper(pl.LightningModule):
         self.model = create_ser_model(
             **config.model
         )
-        # When using mixup, we use BCEWithLogitsLoss (because we are working with hot-one-encoded targets)
-        if config.data.get("mixup_alpha", 0.0) > 0.0:
-            self.criterion = torch.nn.BCEWithLogitsLoss()
-        else:
-            self.criterion = torch.nn.CrossEntropyLoss()
 
         n_classes = config.data.num_classes
         base_metrics = MetricCollection({
@@ -56,6 +59,36 @@ class PLWrapper(pl.LightningModule):
         if stage == "fit":
             self.train_dataset, self.val_dataset = build_dataloaders(self.config)
 
+            # Backward compatibility with previous config versions
+            if "loss" not in self.config:
+                self.config.loss = {}
+
+            # When using mixup, we use BCEWithLogitsLoss (because we are working with hot-one-encoded targets)
+            if self.config.data.get("mixup_alpha", 0.0) > 0.0:
+                self.criterion = torch.nn.BCEWithLogitsLoss()
+            else:
+                if self.config.loss.get("use_weighted_loss", False):
+                    print("Using weighted loss")
+                    weights = get_classes_weights(self.config).to(self.device)
+                else:
+                    weights = None
+                print(f"Weights: {weights}", self.device)
+                if self.config.loss.get("name", "ce").lower() == "ce":
+                    print("Using CrossEntropyLoss")
+                    self.criterion = torch.nn.CrossEntropyLoss(
+                        weight=weights
+                    )
+                elif self.config.loss.get("name", "ce").lower() == "focal":
+                    print("Using Focal Loss")
+                    self.criterion = FocalLoss(
+                        alpha=self.config.loss.get("alpha", 0.5),
+                        gamma=self.config.loss.get("gamma", 2.0),
+                        reduction="mean",
+                        weight=weights
+                    )
+                else:
+                    raise ValueError(f"Invalid loss: {self.config.loss.name}")
+
     def train_dataloader(self):
         """Return the training dataloader."""
         if self.config.model.model_type.lower() == "xeus" or self.config.model.model_type.lower() == "nest":
@@ -65,6 +98,22 @@ class PLWrapper(pl.LightningModule):
             collate_fn = DynamicCollate(
                 target_sr=self.config.data.target_sr,
                 processor=processor,
+            )
+        elif self.config.model.model_type.lower() == "dynamic_audio_text":
+            processor = AutoFeatureExtractor.from_pretrained(self.config.model.audio_model_name)
+            text_tokenizer = AutoTokenizer.from_pretrained(self.config.model.text_model_name)
+            collate_fn = DynamicAudioTextCollate(
+                target_sr=self.config.data.target_sr,
+                processor=processor,
+                text_tokenizer=text_tokenizer,
+            )
+        elif self.config.model.model_type.lower() == "dynamic_audio_text_speakeremb":
+            processor = AutoFeatureExtractor.from_pretrained(self.config.model.audio_model_name)
+            text_tokenizer = AutoTokenizer.from_pretrained(self.config.model.text_model_name)
+            collate_fn = DynamicAudioTextSpeakerEmbCollate(
+                target_sr=self.config.data.target_sr,
+                processor=processor,
+                text_tokenizer=text_tokenizer,
             )
         elif self.config.model.model_type.lower() == "embedding":
             collate_fn = EmbeddingCollate()
@@ -92,6 +141,22 @@ class PLWrapper(pl.LightningModule):
                 target_sr=self.config.data.target_sr,
                 processor=processor,
             )
+        elif self.config.model.model_type.lower() == "dynamic_audio_text":
+            processor = AutoFeatureExtractor.from_pretrained(self.config.model.audio_model_name)
+            text_tokenizer = AutoTokenizer.from_pretrained(self.config.model.text_model_name)
+            collate_fn = DynamicAudioTextCollate(
+                target_sr=self.config.data.target_sr,
+                processor=processor,
+                text_tokenizer=text_tokenizer,
+            )
+        elif self.config.model.model_type.lower() == "dynamic_audio_text_speakeremb":
+            processor = AutoFeatureExtractor.from_pretrained(self.config.model.audio_model_name)
+            text_tokenizer = AutoTokenizer.from_pretrained(self.config.model.text_model_name)
+            collate_fn = DynamicAudioTextSpeakerEmbCollate(
+                target_sr=self.config.data.target_sr,
+                processor=processor,
+                text_tokenizer=text_tokenizer,
+            )
         elif self.config.model.model_type.lower() == "embedding":
             collate_fn = EmbeddingCollate()
         elif self.config.model.model_type.lower() == "last_layer_embedding":
@@ -113,7 +178,15 @@ class PLWrapper(pl.LightningModule):
         if self.trainer.max_steps and self.trainer.max_steps > 0:
             return self.trainer.max_steps
         dataset_size = len(dataset)
-        return dataset_size * self.trainer.max_epochs
+
+        # In PyTorch Lightning >= 2.0, trainer.num_devices returns how many devices
+        # (GPUs/TPUs/CPUs) the trainer is using.
+        gpu_count = self.trainer.num_devices if self.trainer.num_devices else 1
+
+        print("="*100)
+        print(f"Dataset size: {dataset_size} | GPU count: {gpu_count}")
+
+        return (dataset_size // gpu_count) * self.trainer.max_epochs
 
     def configure_optimizers(self):
         """Configures the optimizer and the learning rate scheduler."""
@@ -255,6 +328,29 @@ class PLWrapper(pl.LightningModule):
             self.current_epoch
         )
         plt.close(fig)
+
+        if self.config.model.get("layer_weight_strategy", "per_layer") == "weighted_sum" or \
+            self.config.model.get("layer_weight_strategy", "per_layer") == "weighted_sum_2":
+            layer_weights = self.model.get_layer_weights()
+            layer_weights = torch.tensor(layer_weights)
+            # apply softmax to the weights
+            layer_weights = F.softmax(layer_weights, dim=0)
+            fig = self._plot_layer_weights_bar_chart(layer_weights)
+            self.logger.log_image(
+                "val/layer_weights",
+                [wandb.Image(fig, caption="Layer Weights")],
+                self.current_epoch
+            )
+            plt.close(fig)
+
+    def _plot_layer_weights_bar_chart(self, layer_weights):
+        fig, ax = plt.subplots(figsize=(8, 6))
+        ax.bar(range(len(layer_weights)), layer_weights)
+        ax.set_xticks(range(len(layer_weights)))
+        ax.set_xlabel("Layer")
+        ax.set_ylabel("Weight")
+        ax.set_title("Layer Weights")
+        return fig
 
     def _plot_confusion_matrix(self, cm):
         fig, ax = plt.subplots(figsize=(8, 6))

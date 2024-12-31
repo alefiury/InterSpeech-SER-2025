@@ -1,18 +1,18 @@
-title: SER-Dynamic-FineTuning-NEST-(epochs-${trainer.max_epochs})-(bs-${train.batch_size})-(LR-${optimizer.params.learning_rate})
+title: SER-Dynamic-FineTuning-NEST-${model.model_name})-(LayerStrategy-${model.layer_weight_strategy})-(PoolStrategy-${model.pooling_strategy})-(FreezeBackbone-${model.freeze_backbone})-(epochs-${trainer.max_epochs})-(bs-${train.batch_size})-(LR-${optimizer.params.learning_rate})
 
 wandb_entity: alefiury
 
 datasets:
     train:
         - name: Train
-          metadata_path: "/raid/alefiury/SER/InterSpeech2025/challenge_dataset/train-X_and_O_filtered.csv"
+          metadata_path: "/raid/alefiury/SER/InterSpeech2025/InterSpeech-SER-2025/Dataset/train_set.csv"
           base_dir: "/raid/alefiury/SER/InterSpeech2025/challenge_dataset/Audios"
           filename_column: "FileName"
           target_column: "EmoClass"
 
     val:
         - name: Validation
-          metadata_path: "/raid/alefiury/SER/InterSpeech2025/challenge_dataset/val-X_and_O_filtered.csv"
+          metadata_path: "/raid/alefiury/SER/InterSpeech2025/InterSpeech-SER-2025/Dataset/validation_set.csv"
           base_dir: "/raid/alefiury/SER/InterSpeech2025/challenge_dataset/Audios"
           filename_column: "FileName"
           target_column: "EmoClass"
@@ -42,7 +42,7 @@ data:
     }
 
 train:
-    batch_size: 32
+    batch_size: 64
     shuffle: True
     num_workers: 12
 
@@ -68,7 +68,7 @@ model:
     specific_layer_idx: -1 # Take the last layer
     pooling_strategy: "mean" # Take the mean of the sequence in the last layer
 
-    freeze_backbone: true
+    freeze_backbone: false
 
 optimizer:
     name: "adamw"

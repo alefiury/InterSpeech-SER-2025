@@ -1,0 +1,121 @@
+title: SER-Dynamic_Audio_Text-FineTuning-(epochs-${trainer.max_epochs})-(bs-${train.batch_size})-(LR-${optimizer.params.learning_rate})
+
+wandb_entity: alefiury
+
+datasets:
+    train:
+        - name: Train
+          metadata_path: "/raid/alefiury/SER/InterSpeech2025/InterSpeech-SER-2025/Dataset/transcribed_canary_train_set.csv"
+          base_dir: "/raid/alefiury/SER/InterSpeech2025/challenge_dataset/Audios"
+          filename_column: "FileName"
+          transcript_column: "Transcript"
+          target_column: "EmoClass"
+
+    val:
+        - name: Validation
+          metadata_path: "/raid/alefiury/SER/InterSpeech2025/InterSpeech-SER-2025/Dataset/transcribed_canary_validation_set.csv"
+          base_dir: "/raid/alefiury/SER/InterSpeech2025/challenge_dataset/Audios"
+          filename_column: "FileName"
+          transcript_column: "Transcript"
+          target_column: "EmoClass"
+
+data:
+    num_classes: 8
+
+    target_sr: 16000
+
+    mixup_alpha: 0.0 # 0.0 to disable
+    use_rand_truncation: false
+    min_duration: 2.0 # min duration (in seconds), only used if use_rand_truncation is True
+    min_white_noise_amp: 0.01 # min amplitude of white noise to be added, only used if insert_white_noise is True
+    max_white_noise_amp: 0.1 # max amplitude of white noise to be added, only used if insert_white_noise is True
+    insert_white_noise: false
+
+    # label2id must represent the names of the target in the metadata file
+    label2id: {
+        "A": 0,
+        "C": 1,
+        "D": 2,
+        "F": 3,
+        "H": 4,
+        "N": 5,
+        "S": 6,
+        "U": 7
+    }
+
+train:
+    batch_size: 8
+    shuffle: True
+    num_workers: 12
+
+model:
+    model_type: "dynamic_audio_text"
+
+    # Audio config
+    audio_model_name: "microsoft/wavlm-large"
+    # model_name: "facebook/wav2vec2-xls-r-300m"
+    # model_name: "facebook/hubert-large-ls960-ft"
+    # model_name: "openai/whisper-large"
+    freeze_audio_backbone: false
+    audio_layer_weight_strategy: "per_layer"
+    audio_num_feature_layers: 25
+    specific_audio_layer_idx: -1
+    audio_pooling_strategy: "mean"
+
+    # Text config
+    text_model_name: "intfloat/e5-large-v2"
+    freeze_text_backbone: true
+    # text_layer_weight_strategy: "per_layer"
+    text_layer_weight_strategy: "weighted_sum"
+    text_num_feature_layers: 25
+    specific_text_layer_idx: -1
+    text_pooling_strategy: "mean"
+
+    # MLP config
+    mlp_input_dim: 2048 # Must be adapted to the model, when using attention pooling, this value should be the double of the model hidden size
+    mlp_hidden_dim: ${model.mlp_input_dim} # Must be adapted to the model, should be the same as mlp_input_dim
+    mlp_num_layers: 1
+    mlp_output_size: ${data.num_classes}
+    mlp_dropout: 0.1
+    mlp_activation_func: "relu"
+
+optimizer:
+    name: "adamw"
+    params:
+        min_learning_rate: 1e-5 # Same used in https://ecs.utdallas.edu/research/researchlabs/msp-lab/publications/Goncalves_2024.pdf
+        learning_rate: 5e-5 # Same used in https://ecs.utdallas.edu/research/researchlabs/msp-lab/publications/Goncalves_2024.pdf
+        eps: 1e-8
+        weight_decay: 1e-6
+        betas: [0.9, 0.98]
+
+scheduler:
+    name: "CosineWarmupLR"
+    params:
+        warmup_lr: 500
+
+tags:
+    - ${train.batch_size}-BS
+    - LR-${optimizer.params.learning_rate}
+    - WD-${optimizer.params.weight_decay}
+    - ${model.mlp_input_dim}-AH
+    - ${model.mlp_hidden_dim}-HL
+    - ${model.mlp_num_layers}-IS
+
+trainer:
+    accelerator: "gpu"
+    max_epochs: 20
+    num_sanity_val_steps: 2
+    overfit_batches: 0.0
+    log_every_n_steps: 10
+    gradient_clip_val: 10.0
+    gradient_clip_algorithm: "norm"
+    val_check_interval: 1.0
+    accumulate_grad_batches: 1
+
+model_checkpoint:
+    mode: "max"
+    save_last: true
+    save_weights_only: true
+    monitor: "val/f1-score"
+    dirpath: "../checkpoints/ser-2025"
+    filename: "{epoch:02d}-{step:02d}-{val/f1-score:.4f}"
