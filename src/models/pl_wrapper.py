@@ -23,6 +23,7 @@ from utils.schedulers import CosineWarmupLR, LinearLR
 from utils.dataloader import (
     DynamicCollate,
     DynamicAudioTextCollate,
+    DynamicAudioTextSpeakerEmbCollate,
     XEUSNestCollate,
     EmbeddingCollate,
     LastLayerEmbeddingCollate
@@ -106,6 +107,14 @@ class PLWrapper(pl.LightningModule):
                 processor=processor,
                 text_tokenizer=text_tokenizer,
             )
+        elif self.config.model.model_type.lower() == "dynamic_audio_text_speakeremb":
+            processor = AutoFeatureExtractor.from_pretrained(self.config.model.audio_model_name)
+            text_tokenizer = AutoTokenizer.from_pretrained(self.config.model.text_model_name)
+            collate_fn = DynamicAudioTextSpeakerEmbCollate(
+                target_sr=self.config.data.target_sr,
+                processor=processor,
+                text_tokenizer=text_tokenizer,
+            )
         elif self.config.model.model_type.lower() == "embedding":
             collate_fn = EmbeddingCollate()
         elif self.config.model.model_type.lower() == "last_layer_embedding":
@@ -136,6 +145,14 @@ class PLWrapper(pl.LightningModule):
             processor = AutoFeatureExtractor.from_pretrained(self.config.model.audio_model_name)
             text_tokenizer = AutoTokenizer.from_pretrained(self.config.model.text_model_name)
             collate_fn = DynamicAudioTextCollate(
+                target_sr=self.config.data.target_sr,
+                processor=processor,
+                text_tokenizer=text_tokenizer,
+            )
+        elif self.config.model.model_type.lower() == "dynamic_audio_text_speakeremb":
+            processor = AutoFeatureExtractor.from_pretrained(self.config.model.audio_model_name)
+            text_tokenizer = AutoTokenizer.from_pretrained(self.config.model.text_model_name)
+            collate_fn = DynamicAudioTextSpeakerEmbCollate(
                 target_sr=self.config.data.target_sr,
                 processor=processor,
                 text_tokenizer=text_tokenizer,
@@ -311,6 +328,29 @@ class PLWrapper(pl.LightningModule):
             self.current_epoch
         )
         plt.close(fig)
+
+        if self.config.model.get("layer_weight_strategy", "per_layer") == "weighted_sum" or \
+            self.config.model.get("layer_weight_strategy", "per_layer") == "weighted_sum_2":
+            layer_weights = self.model.get_layer_weights()
+            layer_weights = torch.tensor(layer_weights)
+            # apply softmax to the weights
+            layer_weights = F.softmax(layer_weights, dim=0)
+            fig = self._plot_layer_weights_bar_chart(layer_weights)
+            self.logger.log_image(
+                "val/layer_weights",
+                [wandb.Image(fig, caption="Layer Weights")],
+                self.current_epoch
+            )
+            plt.close(fig)
+
+    def _plot_layer_weights_bar_chart(self, layer_weights):
+        fig, ax = plt.subplots(figsize=(8, 6))
+        ax.bar(range(len(layer_weights)), layer_weights)
+        ax.set_xticks(range(len(layer_weights)))
+        ax.set_xlabel("Layer")
+        ax.set_ylabel("Weight")
+        ax.set_title("Layer Weights")
+        return fig
 
     def _plot_confusion_matrix(self, cm):
         fig, ax = plt.subplots(figsize=(8, 6))

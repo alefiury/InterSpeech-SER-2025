@@ -1,10 +1,13 @@
 #!/bin/bash
-GPU_ID=6
-CONFIG_PATH=("../config/default-dynamic-per_layer-att_pool.yaml" \
-            "../config/default-dynamic-per_layer-mean_pool-backbone.yaml" \
-            "../config/default-dynamic-per_layer-mean_pool.yaml" \
-            "../config/default-dynamic-weighted_sum-att_pool.yaml" \
-            "../config/default-dynamic-weighted_sum-mean_pool.yaml")
+GPU_ID=3
+# CONFIG_PATH=("../config/default_last_layer_embedding_finetuning_wavlm.yaml" \
+#             "../config/default_last_layer_embedding_finetuning_wav2vec2_300m.yaml" \
+#             "../config/default_last_layer_embedding_finetuning_wav2vec2_1b.yaml" \
+#             "../config/default_last_layer_embedding_finetuning_hubert_large.yaml" \
+#             "../config/default_last_layer_embedding_finetuning_hubert_xlarge.yaml")
+
+CONFIG_PATH=("../config/default_last_layer_embedding_finetuning_wav2vec2_300m.yaml" \
+            "../config/default_last_layer_embedding_finetuning_hubert_large.yaml")
 
 for i in "${CONFIG_PATH[@]}"
 do

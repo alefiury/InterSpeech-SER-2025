@@ -1,4 +1,4 @@
-from typing import List, Tuple
+from typing import List, Tuple, Optional
 from abc import ABC, abstractmethod
 
 import torch
@@ -133,6 +133,91 @@ class AttentiveStatisticsPooling(Pooling):
         return pooled
 
 
+class MoLGating(nn.Module):
+    """
+    Mixture-of-Layers router that decides how to weigh the layers.
+    Two modes:
+      - Full Weighted Sum (use_top_k=False):
+          Weighted sum across all layers according to a gating distribution.
+      - Top-K Weighted Sum (use_top_k=True):
+          Keep only the top-k layers per sample, re-normalize among them, and
+          do a weighted sum. Layers not in top-k get zero weight.
+    Args:
+        num_feature_layers (int): Number of layers (experts) available.
+        gate_input_dim (int): Dimension of the input to the gating network.
+        gate_hidden_dim (int): Hidden dimension in the gating MLP.
+        use_top_k (bool): Whether to pick top_k layers or use all layers.
+        top_k (int): Number of layers to pick per example if use_top_k=True.
+    """
+    def __init__(
+        self,
+        num_feature_layers: int = 25,
+        feature_dim: int = 1024,
+        gate_hidden_dim: int = 1024,
+        use_top_k: bool = False,
+        top_k: int = 1,
+    ):
+        super().__init__()
+        self.top_k = top_k
+        self.use_top_k = use_top_k
+        self.num_feature_layers = num_feature_layers
+
+        self.self_attn = nn.MultiheadAttention(
+            embed_dim=feature_dim,
+            num_heads=8,
+            dropout=0.1,
+            batch_first=True
+        )
+
+        self.gate_network = nn.Sequential(
+            nn.Linear(feature_dim, gate_hidden_dim),
+            nn.ReLU(),
+            nn.Linear(gate_hidden_dim, num_feature_layers)
+        )
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        """
+        Args:
+            x (torch.Tensor): Shape [B, L, T, F].
+                B = batch size
+                L = number of layers (experts)
+                T = sequence length
+                F = feature dimension
+
+        Returns:
+            If self.use_top_k == True:
+                Weighted sum of top-K layers => shape [B, F].
+            Else:
+                Weighted sum of all L layers => shape [B, F].
+        """
+        B, NUM_LAYERS, SEQ_LEN, FEAT_DIM = x.shape
+        x = x.mean(dim=2)  # [B, NUM_LAYERS, FEAT_DIM]
+
+        att_agg = self.self_attn(x, x, x)[0] # [B, NUM_LAYERS, FEAT_DIM]
+        gating_input = att_agg.mean(dim=1)  # [B, FEAT_DIM]
+
+        gate_logits = self.gate_network(gating_input)
+        gate_probs = F.softmax(gate_logits, dim=-1)
+
+        # Use top-k layers
+        if self.use_top_k:
+            topk_vals, topk_idx = torch.topk(gate_probs, self.top_k, dim=-1)
+            # Re-normalization among top-k
+            topk_sum = topk_vals.sum(dim=-1, keepdim=True)
+            topk_probs = topk_vals / topk_sum  # shape => [B, top_k]
+            new_gate = torch.zeros_like(gate_probs)
+            new_gate.scatter_(dim=-1, index=topk_idx, src=topk_probs)
+            final_probs = new_gate
+        else:
+            # Use all layers
+            final_probs = gate_probs # shape [B, NUM_LAYERS]
+
+        final_probs_expanded = final_probs.unsqueeze(-1).expand(-1, NUM_LAYERS, FEAT_DIM)  # [B, NUM_LAYERS, FEAT_DIM]
+        # Weighted sum across NUM_LAYERS
+        weighted_sum = (x * final_probs_expanded).sum(dim=1) # shape [B, FEAT_DIM]
+        return weighted_sum
+
+
 class SERBaseModel(nn.Module, ABC):
     """
     Base Model for SER that handles:
@@ -153,6 +238,10 @@ class SERBaseModel(nn.Module, ABC):
         num_feature_layers: int = 25,
         specific_layer_idx: int = -1,
         pooling_strategy: str = "mean", # "mean" or "attpool"
+        # routing parameters
+        gate_hidden_dim: Optional[int] = 1024,
+        use_top_k: Optional[bool] = False,
+        top_k: Optional[int] = 3,
     ):
         super().__init__()
         self.mlp = MLPBase(
@@ -170,20 +259,35 @@ class SERBaseModel(nn.Module, ABC):
         self.pooling_strategy = pooling_strategy
 
         # Validate layer_weight_strategy
-        if layer_weight_strategy == "weighted_sum":
+        if layer_weight_strategy == "weighted_sum" or layer_weight_strategy == "weighted_sum_2":
             self.layer_weights = nn.ParameterList(
                 [nn.Parameter(torch.zeros(1)) for _ in range(num_feature_layers)]
+            )
+        elif layer_weight_strategy == "routing":
+            self.mol_gating = MoLGating(
+                num_feature_layers=num_feature_layers,
+                feature_dim=mlp_input_dim,
+                gate_hidden_dim=gate_hidden_dim,
+                use_top_k=use_top_k,
+                top_k=top_k,
             )
         elif layer_weight_strategy == "per_layer":
             if specific_layer_idx < 0:
                 specific_layer_idx = num_feature_layers - 1
             self.specific_layer_idx = specific_layer_idx
         else:
-            raise ValueError(f"Invalid layer weight strategy: {layer_weight_strategy}")
+            raise ValueError(f"Invalid layer weight strategy: {layer_weight_strategy}, choose 'per_layer' or 'weighted_sum'.")
 
         if pooling_strategy not in ["mean", "attpool"]:
             raise ValueError(
                 f"Invalid pooling strategy: {pooling_strategy}. Choose 'mean' or 'attpool'."
+            )
+
+        if layer_weight_strategy == "weighted_sum_2" and pooling_strategy != "mean":
+            raise ValueError(
+                f"Invalid pooling strategy: {pooling_strategy} for layer weight strategy 'weighted_sum_2'. \
+                    Choose 'mean' for weighted_sum_2, because it already returns [B,F] \
+                        using mean over T dimension in each layer."
             )
 
         if pooling_strategy == "attpool":
@@ -191,6 +295,11 @@ class SERBaseModel(nn.Module, ABC):
             # Which is half of the MLP input dimension because we concatenate mean and std
             # Consider that mlp_input_dim is always equal to the F dimension of the embeddings
             self.attpool = AttentiveStatisticsPooling(input_size=int(mlp_input_dim/2))
+
+    def get_layer_weights(self):
+        layer_weights = [w.detach().item() for w in self.layer_weights]
+        layer_weights = F.softmax(torch.tensor(layer_weights), dim=0)
+        return layer_weights
 
     def _weighted_sum(self, x: torch.Tensor) -> torch.Tensor:
         """
@@ -208,6 +317,31 @@ class SERBaseModel(nn.Module, ABC):
         layer_weights = layer_weights.view(NUM_LAYERS, 1, 1)
 
         expanded_weights = layer_weights.expand(B, NUM_LAYERS, SEQ_LEN, FEAT_DIM)
+        # Apply weights to the input
+        weighted_layers = x * expanded_weights
+        # Sum over the layers dimension
+        # Shape: [B, SEQ_LEN, FEAT_DIM]
+        weighted_sum = weighted_layers.sum(dim=1)
+
+        return weighted_sum
+
+    def _weighted_sum_2(self, x: torch.Tensor) -> torch.Tensor:
+        """
+        Weighted sum over the layers dimension with sequence mean.
+        Args:
+            x: Input tensor of shape [B, NUM_LAYERS, SEQUENCE_LENGTH, FEATURE_DIM]
+        Returns:
+            Weighted sum tensor of shape [B, SEQUENCE_LENGTH, FEATURE_DIM]
+        """
+
+        B, NUM_LAYERS, SEQ_LEN, FEAT_DIM = x.shape
+
+        x = x.mean(dim=2)
+
+        layer_weights = torch.stack([w for w in self.layer_weights])
+        layer_weights = F.softmax(layer_weights, dim=0)
+        layer_weights = layer_weights.view(1, NUM_LAYERS, 1)
+        expanded_weights = layer_weights.expand(B, NUM_LAYERS, FEAT_DIM)
         # Apply weights to the input
         weighted_layers = x * expanded_weights
         # Sum over the layers dimension
@@ -244,6 +378,10 @@ class SERBaseModel(nn.Module, ABC):
             embeddings = self._specific_layer(embeddings, self.specific_layer_idx) # [B,T,F]
         elif self.layer_weight_strategy == "weighted_sum":
             embeddings = self._weighted_sum(embeddings) # [B,T,F]
+        elif self.layer_weight_strategy == "weighted_sum_2":
+            embeddings = self._weighted_sum_2(embeddings) # [B,F]
+        elif self.layer_weight_strategy == "routing":
+            embeddings = self.mol_gating(embeddings)
         else:
             raise ValueError(f"Invalid layer weight strategy: {self.layer_weight_strategy}")
 
@@ -269,8 +407,12 @@ class SERBaseModel(nn.Module, ABC):
         embeddings = self._get_embeddings(x)
         # Apply layer weighting
         embeddings = self._apply_layer_weighting(embeddings)
-        # Apply pooling
-        logits_input = self._apply_pooling(embeddings)  # [B,F] or [B,2F]
+        # weighted_sum_2 and routing already returns [B,F], so we skip pooling
+        if self.layer_weight_strategy == "weighted_sum_2" or self.layer_weight_strategy == "routing":
+            logits_input = embeddings
+        else:
+            # Apply pooling
+            logits_input = self._apply_pooling(embeddings)  # [B,F] for "mean" or [B,2F] for "attpool"
         # MLP classification
         logits = self.mlp(logits_input).squeeze(-1)
         return logits
@@ -345,9 +487,9 @@ class SEREmbeddingModel(SERBaseModel):
 
 class SERLastLayerEmbeddingModel(nn.Module):
     """
-    Base Model for SER that handles:
-    - MLP initialization
-    - Pooling strategy: 'mean' or 'attpool' (attpool only with per_layer)
+    Model that uses the last layer of the embeddings model.
+
+    It does not apply layer weighting strategies.
     """
 
     def __init__(
@@ -451,7 +593,7 @@ class SERDynamicModel(SERBaseModel):
 
 class XEUSModel(SERBaseModel):
     """
-    Uses a pretrained backbone (e.g. WavLM).
+    Uses XEUS as backbone.
     """
     def __init__(
         self,
@@ -495,7 +637,7 @@ class XEUSModel(SERBaseModel):
 
 class NESTModel(SERBaseModel):
     """
-    Uses a pretrained backbone (e.g. WavLM).
+    Uses NEST as backbone.
     """
     def __init__(
         self,
@@ -556,7 +698,17 @@ class NESTModel(SERBaseModel):
 
 class SERDynamicAudioTextModel(nn.Module):
     """
-    Uses a pretrained backbone (e.g. WavLM).
+    Model that uses audio and text backbones to extract embeddings and combines them using an MLP.
+
+    The model supports different layer weighting strategies:
+
+    - 'per_layer': Uses features from a specific layer
+    - 'weighted_sum': Learns weights to combine features from all layers
+
+    And different pooling strategies:
+
+    - 'mean': Simple mean pooling over the sequence dimension
+    - 'attpool': Attentive Statistics Pooling (only available with 'per_layer' strategy)
     """
     def __init__(
         self,
@@ -699,27 +851,15 @@ class SERDynamicAudioTextModel(nn.Module):
         """
 
         B, NUM_LAYERS, SEQ_LEN, FEAT_DIM = x.shape
-
-        print("1", x.shape)
         # take the mean of the hidden states over the layers
         x = x.mean(dim=2)
-        print("2", x.shape)
         if modality == "audio":
             layer_weights = torch.stack([w for w in self.audio_layer_weights])
         elif modality == "text":
             layer_weights = torch.stack([w for w in self.text_layer_weights])
-            print("3", layer_weights.shape)
         layer_weights = F.softmax(layer_weights, dim=0)
-        print("4", layer_weights)
         layer_weights = layer_weights.view(1, NUM_LAYERS, 1)
-        print("5", layer_weights)
         expanded_weights = layer_weights.expand(B, NUM_LAYERS, FEAT_DIM)
-        print("6", expanded_weights)
-        print("6_2", expanded_weights.shape)
-        print("7", expanded_weights[0])
-        print("7_2", expanded_weights[0].shape)
-        print("8", expanded_weights[0][0])
-        print("8_2", expanded_weights[0][0].shape)
         # Apply weights to the input
         weighted_layers = x * expanded_weights
         # Sum over the layers dimension
@@ -778,12 +918,12 @@ class SERDynamicAudioTextModelSpeakerEmb(SERDynamicAudioTextModel):
     def __init__(
         self,
         speaker_emb_dim: int = 512,
-        speaker_emb_projection: int = 768,
+        speaker_emb_projection_dim: int = 1024,
         **kwargs
     ):
         super().__init__(**kwargs)
         self.speaker_emb_dim = speaker_emb_dim
-        self.speaker_emb = nn.Linear(speaker_emb_dim, self.mlp.layers[0].in_features)
+        self.speaker_emb = nn.Linear(speaker_emb_dim, speaker_emb_projection_dim)
 
     def _get_embeddings(self, x: Tuple[torch.Tensor, torch.Tensor, torch.Tensor]) -> torch.Tensor:
         audio, text, speaker_emb = x

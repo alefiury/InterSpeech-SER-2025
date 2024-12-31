@@ -16,7 +16,7 @@ import pandas as pd
 from tqdm import tqdm
 from torch.utils.data import DataLoader
 import torch.nn.functional as F
-from transformers import AutoFeatureExtractor
+from transformers import AutoFeatureExtractor, AutoTokenizer
 from pytorch_lightning.loggers import WandbLogger
 from pytorch_lightning.callbacks import ModelCheckpoint, LearningRateMonitor
 from sklearn.metrics import accuracy_score, f1_score, recall_score, precision_score
@@ -24,12 +24,14 @@ from sklearn.metrics import accuracy_score, f1_score, recall_score, precision_sc
 from models.pl_wrapper import PLWrapper
 from utils.dataloader import (
     DynamicDataset,
+    DynamicAudioTextDataset,
     EmbeddingDataset,
     LastLayerEmbeddingDataset,
 )
 
 from utils.dataloader import (
     DynamicCollate,
+    DynamicAudioTextCollate,
     XEUSNestCollate,
     EmbeddingCollate,
     LastLayerEmbeddingCollate
@@ -77,7 +79,9 @@ def build_dataloaders(
             base_dir=base_dir,
         )
         collate_fn = LastLayerEmbeddingCollate()
-    else:
+    elif config.model.model_type.lower() == "dynamic" \
+            or config.model.model_type.lower() == "nest" \
+            or config.model.model_type.lower() == "xeus":
         test_dataset = DynamicDataset(
             data=test_data,
             filename_column=filename_column,
@@ -96,6 +100,25 @@ def build_dataloaders(
                 target_sr=config.data.target_sr,
                 processor=processor,
             )
+    elif config.model.model_type.lower() == "dynamic_audio_text":
+        test_dataset = DynamicAudioTextDataset(
+            data=test_data,
+            filename_column=config.datasets.train[0].filename_column,
+            transcript_column=config.datasets.train[0].transcript_column,
+            target_column="target",
+            base_dir=config.datasets.train[0].base_dir,
+            mixup_alpha=config.data.mixup_alpha,
+            data_type="test",
+            class_num=config.data.num_classes,
+            target_sr=config.data.target_sr,
+        )
+        processor = AutoFeatureExtractor.from_pretrained(config.model.audio_model_name)
+        text_tokenizer = AutoTokenizer.from_pretrained(config.model.text_model_name)
+        collate_fn = DynamicAudioTextCollate(
+            target_sr=config.data.target_sr,
+            processor=processor,
+            text_tokenizer=text_tokenizer,
+        )
 
     test_dataloader = DataLoader(
         test_dataset,
@@ -134,13 +157,21 @@ def evaluate_model(
     model = model.to(device)
     model.eval()
 
+    print(model.model.get_layer_weights())
+
     targets = []
     predictions = []
 
     for batch in tqdm(test_dataloader, desc="Evaluating"):
         inputs, target = batch
 
-        inputs = inputs.to(device)
+        if isinstance(inputs, torch.Tensor):
+            inputs = inputs.to(device)
+        if isinstance(inputs, list) or isinstance(inputs, tuple):
+            inputs = [i.to(device) for i in inputs]
+        else:
+            inputs = {k: v.to(device) for k, v in inputs.items()}
+
         output = model(inputs)
         # apply softmax and argmax
         output = F.softmax(output, dim=1)
