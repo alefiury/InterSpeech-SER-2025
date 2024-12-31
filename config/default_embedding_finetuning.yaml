@@ -1,6 +1,12 @@
-title: SER-Embedding-FineTuning-(epochs-${trainer.max_epochs})-(bs-${train.batch_size})-(LR-${optimizer.params.learning_rate})-(LWS${model.layer_weight_strategy})-(PS${model.pooling_strategy})
+title: SER-Embedding-FineTuning-(Loss-${loss.name})-(BS-${data.use_balanced_sampling})-(epochs-${trainer.max_epochs})-(bs-${train.batch_size})-(LR-${optimizer.params.learning_rate})-(LWS${model.layer_weight_strategy})-(PS${model.pooling_strategy})
 
 wandb_entity: alefiury
+
+loss:
+    name: "ce"
+    gamma: 2.0
+    alpha: 0.5
+    use_weighted_loss: false # Uses "prior" weights as in https://www.isca-archive.org/odyssey_2024/chen24_odyssey.pdf
 
 datasets:
     train:
@@ -20,18 +26,20 @@ datasets:
 data:
     num_classes: 8
 
+    use_balanced_sampling: false # If true, the dataset will be balanced based on the inverse frequency of the classes
+
     use_seqaug: false
 
     # label2id must represent the names of the target in the metadata file
     label2id: {
-        "neutral": 0,
-        "calm": 1,
-        "happy": 2,
-        "sad": 3,
-        "angry": 4,
-        "fearful": 5,
-        "disgust": 6,
-        "surprised": 7
+        "A": 0,
+        "C": 1,
+        "D": 2,
+        "F": 3,
+        "H": 4,
+        "N": 5,
+        "S": 6,
+        "U": 7
     }
 
 train:

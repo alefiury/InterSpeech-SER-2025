@@ -1,6 +1,12 @@
-title: SER-Dynamic-FineTuning-${model.model_name}-(LayerStrategy-${model.layer_weight_strategy})-(PoolStrategy-${model.pooling_strategy})-(FreezeBackbone-${model.freeze_backbone})-(epochs-${trainer.max_epochs})-(bs-${train.batch_size})-(LR-${optimizer.params.learning_rate})
+title: SER-Dynamic-FineTuning-${model.model_name}-(LayerStrategy-${model.layer_weight_strategy})-(PoolStrategy-${model.pooling_strategy})-(FreezeBackbone-${model.freeze_backbone})-(BalancedSampling-${data.use_balanced_sampling})-(epochs-${trainer.max_epochs})-(bs-${train.batch_size})-(LR-${optimizer.params.learning_rate})
 
 wandb_entity: alefiury
+
+loss:
+    name: "ce" # can be "ce" (cross-entropy) or "focal" (focal loss)
+    gamma: 2.0
+    alpha: 0.5
+    use_weighted_loss: false # Uses "prior" weights as in https://www.isca-archive.org/odyssey_2024/chen24_odyssey.pdf
 
 datasets:
     train:
@@ -18,16 +24,26 @@ datasets:
           target_column: "EmoClass"
 
 data:
-    num_classes: 8
+    num_classes: 32
 
     target_sr: 16000
 
-    mixup_alpha: 0.0 # 0.0 to disable
-    use_rand_truncation: false
+    use_balanced_sampling: false # If true, the dataset will be balanced based on the inverse frequency of the classes
+
+    mixup_alpha: 0.0 # 0.0 to disable mixup, if you want to use mixup, set this value to 0.5 (recommended)
+
+    use_rand_truncation: false # If true, the audio will be randomly truncated between min_duration and the original duration
     min_duration: 2.0 # min duration (in seconds), only used if use_rand_truncation is True
-    min_white_noise_amp: 0.01 # min amplitude of white noise to be added, only used if insert_white_noise is True
-    max_white_noise_amp: 0.1 # max amplitude of white noise to be added, only used if insert_white_noise is True
-    insert_white_noise: false
+
+    use_background_noise: false # If true, background noise will be added to the audio (Music and environmental noise)
+    background_noise_dir: "/raid/alefiury/SER/InterSpeech2025/InterSpeech-SER-2025/augmentation_data/musan"
+    background_noise_min_snr_in_db: 3.0
+    background_noise_max_snr_in_db: 15.0
+    background_noise_p: 0.5
+
+    use_rir: false # If true, RIRs (reverberation) will be added to the audio
+    rir_dir: "/raid/alefiury/SER/InterSpeech2025/InterSpeech-SER-2025/augmentation_data/RIRS_NOISES"
+    rir_p: 0.5
 
     # label2id must represent the names of the target in the metadata file
     label2id: {
@@ -54,21 +70,23 @@ model:
     # model_name: "facebook/hubert-large-ls960-ft"
     # model_name: "openai/whisper-large"
 
-    mlp_input_dim: 1024 # Must be adapted to the model, when using attention pooling, this value should be the double of the model hidden size
+    mlp_input_dim: 1024 # Must be adapted to the model, when using attention pooling, this value should be double the original value
     mlp_hidden_dim: ${model.mlp_input_dim} # Must be adapted to the model, should be the same as mlp_input_dim
     mlp_num_layers: 1
     mlp_output_size: ${data.num_classes}
-    mlp_dropout: 0.1
+    mlp_dropout: 0.2
     mlp_activation_func: "relu"
-    # layer_weight_strategy: "per_layer"
-    layer_weight_strategy: "weighted_sum_2"
-    # layer_weight_strategy: "routing"
-    num_feature_layers: 25 # Must be adapted to the model
-    specific_layer_idx: -1 # Take the last layer
-    pooling_strategy: "mean" # Take the mean of the sequence in the last layer
-    freeze_backbone: true
 
-    # routing parameters
+    layer_weight_strategy: "per_layer"
+    # layer_weight_strategy: "weighted_sum_2"
+    # layer_weight_strategy: "routing"
+
+    num_feature_layers: 25 # Must be adapted to the model
+    specific_layer_idx: -1 # -1 Take the last layer, only used if layer_weight_strategy is "per_layer"
+    pooling_strategy: "mean" # Take the mean of the sequence in the last layer
+    freeze_backbone: true # Whether to freeze the backbone or not
+
+    # routing parameters, only used if layer_weight_strategy is "routing"
     gate_hidden_dim: ${model.mlp_input_dim}
     use_top_k: false
     top_k: 3
@@ -91,6 +109,11 @@ tags:
     - ${train.batch_size}-BS
     - LR-${optimizer.params.learning_rate}
     - WD-${optimizer.params.weight_decay}
+    - ${model.layer_weight_strategy}-LWS
+    - ${model.pooling_strategy}-Pooling
+    - ${model.freeze_backbone}-FB
+    - ${data.num_classes}-NC
+    - BS-${data.use_balanced_sampling}
     - ${model.model_name}-HS
     - ${model.mlp_input_dim}-AH
     - ${model.mlp_hidden_dim}-HL

@@ -733,6 +733,11 @@ class SERDynamicAudioTextModel(nn.Module):
         mlp_output_size: int = 7,
         mlp_dropout: float = 0.1,
         mlp_activation_func: str = "relu",
+        # projection
+        audio_feat_dim: int = 1024,
+        text_feat_dim: int = 1024,
+        audio_proj_dropout: float = 0.2,
+        text_proj_dropout: float = 0.2,
     ):
         super().__init__()
         audio_config = AutoConfig.from_pretrained(audio_model_name, output_hidden_states=True)
@@ -793,6 +798,18 @@ class SERDynamicAudioTextModel(nn.Module):
             # Which is half of the MLP input dimension because we concatenate mean and std
             # Consider that mlp_input_dim is always equal to the F dimension of the embeddings
             self.text_attpool = AttentiveStatisticsPooling(input_size=int(mlp_input_dim/2))
+
+        self.audio_proj = nn.Sequential(
+            nn.Linear(audio_feat_dim, audio_feat_dim),
+            nn.ReLU(),
+            nn.Dropout(audio_proj_dropout),
+        )
+
+        self.text_proj = nn.Sequential(
+            nn.Linear(text_feat_dim, text_feat_dim),
+            nn.ReLU(),
+            nn.Dropout(text_proj_dropout),
+        )
 
         self.mlp = MLPBase(
             input_size=mlp_input_dim,
@@ -907,6 +924,10 @@ class SERDynamicAudioTextModel(nn.Module):
         audio_hidden_states, text_hidden_states = self._get_embeddings(x)
         # Apply layer weighting
         audio_embeddings, text_embeddings = self._apply_pooling(audio_hidden_states, text_hidden_states)
+        # Audio projection
+        audio_embeddings = self.audio_proj(audio_embeddings)
+        # Text projection
+        text_embeddings = self.text_proj(text_embeddings)
         # Concatenate audio and text embeddings
         logits_input = torch.cat((audio_embeddings, text_embeddings), dim=-1)  # [B,AF+TF]
         # MLP classification
@@ -917,13 +938,39 @@ class SERDynamicAudioTextModel(nn.Module):
 class SERDynamicAudioTextModelSpeakerEmb(SERDynamicAudioTextModel):
     def __init__(
         self,
+        # projection
         speaker_emb_dim: int = 512,
         speaker_emb_projection_dim: int = 1024,
+        audio_feat_dim: int = 1024,
+        text_feat_dim: int = 1024,
+        audio_proj_dropout: float = 0.2,
+        text_proj_dropout: float = 0.2,
+        speaker_emb_dropout: float = 0.2,
         **kwargs
     ):
         super().__init__(**kwargs)
         self.speaker_emb_dim = speaker_emb_dim
-        self.speaker_emb = nn.Linear(speaker_emb_dim, speaker_emb_projection_dim)
+
+        # Speaker embedding
+        self.speaker_emb_proj = nn.Sequential(
+            nn.Linear(speaker_emb_dim, speaker_emb_projection_dim),
+            nn.ReLU(),
+            nn.Dropout(speaker_emb_dropout),
+        )
+
+        # Audio projection
+        self.audio_proj = nn.Sequential(
+            nn.Linear(audio_feat_dim, audio_feat_dim),
+            nn.ReLU(),
+            nn.Dropout(audio_proj_dropout),
+        )
+
+        # Text projection
+        self.text_proj = nn.Sequential(
+            nn.Linear(text_feat_dim, text_feat_dim),
+            nn.ReLU(),
+            nn.Dropout(text_proj_dropout),
+        )
 
     def _get_embeddings(self, x: Tuple[torch.Tensor, torch.Tensor, torch.Tensor]) -> torch.Tensor:
         audio, text, speaker_emb = x
@@ -947,8 +994,14 @@ class SERDynamicAudioTextModelSpeakerEmb(SERDynamicAudioTextModel):
         audio_hidden_states, text_hidden_states, speaker_emb = self._get_embeddings(x)
         # Apply layer weighting
         audio_embeddings, text_embeddings = self._apply_pooling(audio_hidden_states, text_hidden_states)
+        # Audio projection
+        audio_embeddings = self.audio_proj(audio_embeddings)
+        # Text projection
+        text_embeddings = self.text_proj(text_embeddings)
+        # Speaker embedding projection
+        speaker_emb = self.speaker_emb_proj(speaker_emb)
         # Concatenate audio and text embeddings
-        logits_input = torch.cat((audio_embeddings, text_embeddings, self.speaker_emb(speaker_emb)), dim=-1)
+        logits_input = torch.cat((audio_embeddings, text_embeddings, speaker_emb), dim=-1)
         # MLP classification
         logits = self.mlp(logits_input).squeeze(-1)
         return logits
