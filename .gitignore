@@ -6,6 +6,7 @@ core
 
 wandb/
 ssl_checkpoints/
+augmentation_data/
 InterSpeech-SER-2025/
 
 # C extensions

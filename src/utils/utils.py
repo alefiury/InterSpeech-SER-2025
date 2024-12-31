@@ -69,18 +69,25 @@ def build_dataloaders(config):
             or config.model.model_type.lower() == "xeus":
         train_dataset = DynamicDataset(
             data=train_data,
+            base_dir=config.datasets.train[0].base_dir,
             filename_column=config.datasets.train[0].filename_column,
             target_column="target",
-            base_dir=config.datasets.train[0].base_dir,
             mixup_alpha=config.data.mixup_alpha,
             use_rand_truncation=config.data.use_rand_truncation,
             min_duration=config.data.min_duration,
-            insert_white_noise=config.data.insert_white_noise,
-            min_white_noise_amp=config.data.min_white_noise_amp,
-            max_white_noise_amp=config.data.max_white_noise_amp,
             data_type="train",
             class_num=config.data.num_classes,
             target_sr=config.data.target_sr,
+            # background noise parameters
+            use_background_noise=config.data.use_background_noise,
+            background_noise_dir=config.data.background_noise_dir,
+            background_noise_min_snr_in_db=config.data.background_noise_min_snr_in_db,
+            background_noise_max_snr_in_db=config.data.background_noise_max_snr_in_db,
+            background_noise_p=config.data.background_noise_p,
+            # impulse response parameters
+            use_rir=config.data.use_rir,
+            rir_dir=config.data.rir_dir,
+            rir_p=config.data.rir_p,
         )
 
         val_dataset = DynamicDataset(
@@ -96,19 +103,26 @@ def build_dataloaders(config):
     elif config.model.model_type.lower() == "dynamic_audio_text":
         train_dataset = DynamicAudioTextDataset(
             data=train_data,
+            base_dir=config.datasets.train[0].base_dir,
             filename_column=config.datasets.train[0].filename_column,
             transcript_column=config.datasets.train[0].transcript_column,
             target_column="target",
-            base_dir=config.datasets.train[0].base_dir,
             mixup_alpha=config.data.mixup_alpha,
             use_rand_truncation=config.data.use_rand_truncation,
             min_duration=config.data.min_duration,
-            insert_white_noise=config.data.insert_white_noise,
-            min_white_noise_amp=config.data.min_white_noise_amp,
-            max_white_noise_amp=config.data.max_white_noise_amp,
             data_type="train",
             class_num=config.data.num_classes,
             target_sr=config.data.target_sr,
+            # background noise parameters
+            use_background_noise=config.data.use_background_noise,
+            background_noise_dir=config.data.background_noise_dir,
+            background_noise_min_snr_in_db=config.data.background_noise_min_snr_in_db,
+            background_noise_max_snr_in_db=config.data.background_noise_max_snr_in_db,
+            background_noise_p=config.data.background_noise_p,
+            # impulse response parameters
+            use_rir=config.data.use_rir,
+            rir_dir=config.data.rir_dir,
+            rir_p=config.data.rir_p,
         )
 
         val_dataset = DynamicAudioTextDataset(
@@ -125,20 +139,27 @@ def build_dataloaders(config):
     elif config.model.model_type.lower() == "dynamic_audio_text_speakeremb":
         train_dataset = DynamicAudioTextSpeakerEmbDataset(
             data=train_data,
+            base_dir=config.datasets.train[0].base_dir,
             filename_column=config.datasets.train[0].filename_column,
             transcript_column=config.datasets.train[0].transcript_column,
             speakeremb_base_dir=config.datasets.train[0].speakeremb_base_dir,
             target_column="target",
-            base_dir=config.datasets.train[0].base_dir,
             mixup_alpha=config.data.mixup_alpha,
             use_rand_truncation=config.data.use_rand_truncation,
             min_duration=config.data.min_duration,
-            insert_white_noise=config.data.insert_white_noise,
-            min_white_noise_amp=config.data.min_white_noise_amp,
-            max_white_noise_amp=config.data.max_white_noise_amp,
             data_type="train",
             class_num=config.data.num_classes,
             target_sr=config.data.target_sr,
+            # background noise parameters
+            use_background_noise=config.data.use_background_noise,
+            background_noise_dir=config.data.background_noise_dir,
+            background_noise_min_snr_in_db=config.data.background_noise_min_snr_in_db,
+            background_noise_max_snr_in_db=config.data.background_noise_max_snr_in_db,
+            background_noise_p=config.data.background_noise_p,
+            # impulse response parameters
+            use_rir=config.data.use_rir,
+            rir_dir=config.data.rir_dir,
+            rir_p=config.data.rir_p,
         )
 
         val_dataset = DynamicAudioTextSpeakerEmbDataset(

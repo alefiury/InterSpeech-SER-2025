@@ -1,4 +1,3 @@
-
 import wandb
 import seaborn as sns
 import matplotlib.pyplot as plt
@@ -6,9 +5,11 @@ import torch
 import pytorch_lightning as pl
 import torch.nn.functional as F
 from omegaconf import DictConfig
+import numpy as np
 from torch.optim import Adam, AdamW
-from transformers import AutoTokenizer, AutoFeatureExtractor
 from lightning.pytorch.utilities import grad_norm
+from torch.utils.data import WeightedRandomSampler
+from transformers import AutoTokenizer, AutoFeatureExtractor
 from torchmetrics import Accuracy, Precision, Recall, F1Score, MetricCollection, ConfusionMatrix
 
 # backward compatibility
@@ -17,9 +18,9 @@ try:
 except ImportError:
     FocalLoss = None
 
-from utils.utils import build_dataloaders, get_classes_weights
 from models.factory import create_ser_model
 from utils.schedulers import CosineWarmupLR, LinearLR
+from utils.utils import build_dataloaders, get_classes_weights
 from utils.dataloader import (
     DynamicCollate,
     DynamicAudioTextCollate,
@@ -122,14 +123,39 @@ class PLWrapper(pl.LightningModule):
         else:
             raise ValueError(f"Invalid model type: {self.config.model.model_type}")
 
-        return torch.utils.data.DataLoader(
-            self.train_dataset,
-            batch_size=self.config.train.batch_size,
-            shuffle=self.config.train.shuffle,
-            num_workers=self.config.train.num_workers,
-            pin_memory=True,
-            collate_fn=collate_fn,
-        )
+
+        # Usage of balanced sampling
+        if self.config.data.get("use_balanced_sampling", False):
+            print("Using Balanced Sampling!")
+            # Compute sample weights
+            class_weights = get_classes_weights(self.config)
+            # Apply weights to each sample
+            sample_weights = [class_weights[t] for t in self.train_dataset.targets]
+            sample_weights = torch.tensor(sample_weights, dtype=torch.float)
+            # Create the sampler
+            weighted_sampler = WeightedRandomSampler(
+                weights=sample_weights, # weights here don't need to be normalized to sum to 1 (https://pytorch.org/docs/stable/data.html)
+                num_samples=len(sample_weights),
+                replacement=True # Sample with replacement (when a sample index is drawn for a row, it is put back in the pool)
+            )
+
+            return torch.utils.data.DataLoader(
+                self.train_dataset,
+                batch_size=self.config.train.batch_size,
+                sampler=weighted_sampler, # sampler is used instead of shuffle
+                num_workers=self.config.train.num_workers,
+                pin_memory=True,
+                collate_fn=collate_fn,
+            )
+        else:
+            return torch.utils.data.DataLoader(
+                self.train_dataset,
+                batch_size=self.config.train.batch_size,
+                shuffle=self.config.train.shuffle,
+                num_workers=self.config.train.num_workers,
+                pin_memory=True,
+                collate_fn=collate_fn,
+            )
 
     def val_dataloader(self):
         """Return the validation dataloader."""

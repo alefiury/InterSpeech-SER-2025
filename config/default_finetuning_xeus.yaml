@@ -1,6 +1,12 @@
-title: SER-Dynamic-FineTuning-XEUS-(LayerStrategy-${model.layer_weight_strategy})-(PoolStrategy-${model.pooling_strategy})-(FreezeBackbone-${model.freeze_backbone})-(epochs-${trainer.max_epochs})-(bs-${train.batch_size})-(LR-${optimizer.params.learning_rate})
+title: SER-Dynamic-FineTuning-XEUS-(Loss-${loss.name})-(BS-${data.use_balanced_sampling})-(LayerStrategy-${model.layer_weight_strategy})-(PoolStrategy-${model.pooling_strategy})-(FreezeBackbone-${model.freeze_backbone})-(epochs-${trainer.max_epochs})-(bs-${train.batch_size})-(LR-${optimizer.params.learning_rate})
 
 wandb_entity: alefiury
+
+loss:
+    name: "ce"
+    gamma: 2.0
+    alpha: 0.5
+    use_weighted_loss: false # Uses "prior" weights as in https://www.isca-archive.org/odyssey_2024/chen24_odyssey.pdf
 
 datasets:
     train:
@@ -18,16 +24,26 @@ datasets:
           target_column: "EmoClass"
 
 data:
-    num_classes: 8
+    num_classes: 32
 
     target_sr: 16000
 
-    mixup_alpha: 0.0 # 0.0 to disable
-    use_rand_truncation: false
+    use_balanced_sampling: false # If true, the dataset will be balanced based on the inverse frequency of the classes
+
+    mixup_alpha: 0.0 # 0.0 to disable mixup, if you want to use mixup, set this value to 0.5 (recommended)
+
+    use_rand_truncation: false # If true, the audio will be randomly truncated between min_duration and the original duration
     min_duration: 2.0 # min duration (in seconds), only used if use_rand_truncation is True
-    min_white_noise_amp: 0.01 # min amplitude of white noise to be added, only used if insert_white_noise is True
-    max_white_noise_amp: 0.1 # max amplitude of white noise to be added, only used if insert_white_noise is True
-    insert_white_noise: false
+
+    use_background_noise: false # If true, background noise will be added to the audio (Music and environmental noise)
+    background_noise_dir: "/raid/alefiury/SER/InterSpeech2025/InterSpeech-SER-2025/augmentation_data/musan"
+    background_noise_min_snr_in_db: 3.0
+    background_noise_max_snr_in_db: 15.0
+    background_noise_p: 0.5
+
+    use_rir: false # If true, RIRs (reverberation) will be added to the audio
+    rir_dir: "/raid/alefiury/SER/InterSpeech2025/InterSpeech-SER-2025/augmentation_data/RIRS_NOISES"
+    rir_p: 0.5
 
     # label2id must represent the names of the target in the metadata file
     label2id: {

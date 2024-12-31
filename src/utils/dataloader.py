@@ -8,6 +8,7 @@ import numpy as np
 import pandas as pd
 from torch.utils.data import Dataset
 from transformers import WhisperFeatureExtractor
+from torch_audiomentations import AddBackgroundNoise, ApplyImpulseResponse, Identity
 
 
 class EmbeddingDataset(Dataset):
@@ -250,15 +251,24 @@ class DynamicDataset(Dataset):
         base_dir: str,
         filename_column: str,
         target_column: str,
-        mixup_alpha: Optional[float] = 0.0,
-        use_rand_truncation: bool = False,
-        min_duration: Optional[float] = 0.0,
-        insert_white_noise: bool = False,
-        min_white_noise_amp: float = 0.01,
-        max_white_noise_amp: float = 0.1,
-        data_type: str = "train",
         class_num: int = 15,
         target_sr: int = 16000,
+        data_type: str = "train",
+        # Mixup parameters (Optional)
+        mixup_alpha: Optional[float] = 0.0,
+        # Random truncation parameters (Optional)
+        use_rand_truncation: Optional[bool] = False,
+        min_duration: Optional[float] = 0.0,
+        # background noise parameters (Optional)
+        use_background_noise: Optional[bool] = False,
+        background_noise_dir: Optional[str] = None,
+        background_noise_min_snr_in_db: Optional[float] = 3.0,
+        background_noise_max_snr_in_db: Optional[float] = 15.0,
+        background_noise_p: Optional[float] = 0.5,
+        # impulse response parameters (Optional)
+        use_rir: Optional[bool] = False,
+        rir_dir: Optional[str] = None,
+        rir_p: Optional[float] = 0.5,
     ):
         """Initialization"""
         self.data = data
@@ -277,16 +287,38 @@ class DynamicDataset(Dataset):
         self.min_duration = min_duration
         self.use_rand_truncation = use_rand_truncation
 
-        self.insert_white_noise = insert_white_noise
-        self.min_white_noise_amp = min_white_noise_amp
-        self.max_white_noise_amp = max_white_noise_amp
-
         self.data_type = data_type
         self.class_num = class_num
 
         self.target_sr = target_sr
         # Cache for sampling rate resamplers
         self.resamplers = {}
+
+        # Apply background noise
+        if use_background_noise:
+            self.background_noise = AddBackgroundNoise(
+                background_paths=background_noise_dir,
+                min_snr_in_db=background_noise_min_snr_in_db,
+                max_snr_in_db=background_noise_max_snr_in_db,
+                sample_rate=target_sr,
+                target_rate=target_sr,
+                p=background_noise_p
+            )
+        else:
+            # Identity augmentation if not using background noise
+            self.background_noise = Identity()
+
+        # Apply impulse response
+        if use_rir:
+            self.impulse_response = ApplyImpulseResponse(
+                ir_paths=rir_dir,
+                sample_rate=target_sr,
+                target_rate=target_sr,
+                p=rir_p,
+            )
+        else:
+            # Identity augmentation if not using impulse response
+            self.impulse_response = Identity()
 
     def __len__(self):
         return len(self.data)
@@ -329,7 +361,7 @@ class DynamicDataset(Dataset):
         main_file = self.filenames[index]
 
         # If using mixup and in training mode
-        if self.mixup_alpha > 0.0 and self.data_type == "train":
+        if self.mixup_alpha > 0.0 and self.data_type == "train" and random.random() < self.mixup_alpha:
             attempts = 0
             rand_index = index
             # Force mixup with a different targets, attempt limit is 10 to avoid infinite loop
@@ -371,17 +403,13 @@ class DynamicDataset(Dataset):
         if self.mixup_alpha > 0.0 and self.data_type != "train":
             target = torch.zeros(self.class_num)
             target[main_target] = 1.0
-
         # Random Truncation
         if self.use_rand_truncation and self.data_type == "train":
             audio = self._random_truncation(audio)
-
-        # White noise insertion
-        if self.insert_white_noise and self.data_type == "train":
-            # dynamically insert white noise
-            white_noise_amp = torch.rand(1) * (self.max_white_noise_amp - self.min_white_noise_amp) + self.min_white_noise_amp
-            audio = audio + white_noise_amp * torch.randn_like(audio)
-
+        # Background noise insertion or Identity
+        audio = self.background_noise(audio.unsqueeze(0)).squeeze(0)
+        # Impulse response (Reverberation) or Identity
+        audio = self.impulse_response(audio.unsqueeze(0)).squeeze(0)
         return audio.squeeze(0).numpy(), target
 
 
@@ -428,88 +456,15 @@ class DynamicCollate:
         return processed, targets
 
 
-class DynamicAudioTextDataset(Dataset):
+class DynamicAudioTextDataset(DynamicDataset):
     def __init__(
         self,
-        data,
-        base_dir: str,
-        filename_column: str,
         transcript_column: str,
-        target_column: str,
-        mixup_alpha: Optional[float] = 0.0,
-        use_rand_truncation: bool = False,
-        min_duration: Optional[float] = 0.0,
-        insert_white_noise: bool = False,
-        min_white_noise_amp: float = 0.01,
-        max_white_noise_amp: float = 0.1,
-        data_type: str = "train",
-        class_num: int = 15,
-        target_sr: int = 16000,
+        **kwargs,
     ):
+        super().__init__(**kwargs)
         """Initialization"""
-        self.data = data
-        self.base_dir = base_dir
-
-        # Cache filepaths and targets
-        self.filenames = self.data[filename_column].values
         self.transcripts = self.data[transcript_column].values
-        self.targets = self.data[target_column].values
-
-        self.filename_column = filename_column
-        self.target_column = target_column
-
-        # Data augmentation parameters
-        self.mixup_alpha = mixup_alpha
-
-        self.min_duration = min_duration
-        self.use_rand_truncation = use_rand_truncation
-
-        self.insert_white_noise = insert_white_noise
-        self.min_white_noise_amp = min_white_noise_amp
-        self.max_white_noise_amp = max_white_noise_amp
-
-        self.data_type = data_type
-        self.class_num = class_num
-
-        self.target_sr = target_sr
-        # Cache for sampling rate resamplers
-        self.resamplers = {}
-
-    def __len__(self):
-        return len(self.data)
-
-    def _random_truncation(self, audio: torch.Tensor) -> torch.Tensor:
-        """
-        Cut or pad an audio tensor to the desired length.
-        """
-        min_length = int(self.min_duration * self.target_sr)
-        len_audio = audio.shape[-1]
-
-        if self.use_rand_truncation and len_audio > min_length:
-            segment_length = random.randint(min_length, len_audio)
-
-            max_start = len_audio - segment_length
-            start = random.randint(0, max_start)
-            end = start + segment_length
-
-            audio = audio[..., start:end]
-
-        return audio
-
-    def _load_wav(self, filepath: str):
-        waveform, source_sr = torchaudio.load(filepath)
-
-        # Convert to mono if stereo
-        if waveform.dim() == 2 and waveform.shape[0] > 1:
-            waveform = waveform.mean(dim=0, keepdim=True)
-
-        # Resample if needed
-        if source_sr != self.target_sr:
-            if source_sr not in self.resamplers:
-                self.resamplers[source_sr] = torchaudio.transforms.Resample(orig_freq=source_sr, new_freq=self.target_sr)
-            waveform = self.resamplers[source_sr](waveform)
-
-        return waveform, self.target_sr
 
     def __getitem__(self, index: int) -> Dict[torch.Tensor, torch.Tensor]:
         main_target = self.targets[index]
@@ -517,7 +472,7 @@ class DynamicAudioTextDataset(Dataset):
         transcript = self.transcripts[index]
 
         # If using mixup and in training mode
-        if self.mixup_alpha > 0.0 and self.data_type == "train":
+        if self.mixup_alpha > 0.0 and self.data_type == "train" and random.random() < self.mixup_alpha:
             attempts = 0
             rand_index = index
             # Force mixup with a different targets, attempt limit is 10 to avoid infinite loop
@@ -555,7 +510,7 @@ class DynamicAudioTextDataset(Dataset):
             audio, _ = self._load_wav(filepath)
             target = main_target
 
-        # One-hot encoding for the target if using mixup in eval mode
+        # One-hot encoding for the target if using mixup in eval mode (because we are using BCEWithLogitsLoss)
         if self.mixup_alpha > 0.0 and self.data_type != "train":
             target = torch.zeros(self.class_num)
             target[main_target] = 1.0
@@ -563,12 +518,10 @@ class DynamicAudioTextDataset(Dataset):
         # Random Truncation
         if self.use_rand_truncation and self.data_type == "train":
             audio = self._random_truncation(audio)
-
-        # White noise insertion
-        if self.insert_white_noise and self.data_type == "train":
-            # dynamically insert white noise
-            white_noise_amp = torch.rand(1) * (self.max_white_noise_amp - self.min_white_noise_amp) + self.min_white_noise_amp
-            audio = audio + white_noise_amp * torch.randn_like(audio)
+        # Background noise insertion or Identity
+        audio = self.background_noise(audio.unsqueeze(0)).squeeze(0)
+        # Impulse response (Reverberation) or Identity
+        audio = self.impulse_response(audio.unsqueeze(0)).squeeze(0)
 
         return audio.squeeze(0).numpy(), transcript, target
 
@@ -626,90 +579,17 @@ class DynamicAudioTextCollate:
         return (processed, tokenized_transcripts), targets
 
 
-class DynamicAudioTextSpeakerEmbDataset(Dataset):
+class DynamicAudioTextSpeakerEmbDataset(DynamicDataset):
     def __init__(
         self,
-        data,
-        base_dir: str,
-        filename_column: str,
         transcript_column: str,
         speakeremb_base_dir: str,
-        target_column: str,
-        mixup_alpha: Optional[float] = 0.0,
-        use_rand_truncation: bool = False,
-        min_duration: Optional[float] = 0.0,
-        insert_white_noise: bool = False,
-        min_white_noise_amp: float = 0.01,
-        max_white_noise_amp: float = 0.1,
-        data_type: str = "train",
-        class_num: int = 15,
-        target_sr: int = 16000,
+        **kwargs,
     ):
+        super().__init__(**kwargs)
         """Initialization"""
-        self.data = data
-        self.base_dir = base_dir
         self.speakeremb_base_dir = speakeremb_base_dir
-
-        # Cache filepaths and targets
-        self.filenames = self.data[filename_column].values
         self.transcripts = self.data[transcript_column].values
-        self.targets = self.data[target_column].values
-
-        self.filename_column = filename_column
-        self.target_column = target_column
-
-        # Data augmentation parameters
-        self.mixup_alpha = mixup_alpha
-
-        self.min_duration = min_duration
-        self.use_rand_truncation = use_rand_truncation
-
-        self.insert_white_noise = insert_white_noise
-        self.min_white_noise_amp = min_white_noise_amp
-        self.max_white_noise_amp = max_white_noise_amp
-
-        self.data_type = data_type
-        self.class_num = class_num
-
-        self.target_sr = target_sr
-        # Cache for sampling rate resamplers
-        self.resamplers = {}
-
-    def __len__(self):
-        return len(self.data)
-
-    def _random_truncation(self, audio: torch.Tensor) -> torch.Tensor:
-        """
-        Cut or pad an audio tensor to the desired length.
-        """
-        min_length = int(self.min_duration * self.target_sr)
-        len_audio = audio.shape[-1]
-
-        if self.use_rand_truncation and len_audio > min_length:
-            segment_length = random.randint(min_length, len_audio)
-
-            max_start = len_audio - segment_length
-            start = random.randint(0, max_start)
-            end = start + segment_length
-
-            audio = audio[..., start:end]
-
-        return audio
-
-    def _load_wav(self, filepath: str):
-        waveform, source_sr = torchaudio.load(filepath)
-
-        # Convert to mono if stereo
-        if waveform.dim() == 2 and waveform.shape[0] > 1:
-            waveform = waveform.mean(dim=0, keepdim=True)
-
-        # Resample if needed
-        if source_sr != self.target_sr:
-            if source_sr not in self.resamplers:
-                self.resamplers[source_sr] = torchaudio.transforms.Resample(orig_freq=source_sr, new_freq=self.target_sr)
-            waveform = self.resamplers[source_sr](waveform)
-
-        return waveform, self.target_sr
 
     def __getitem__(self, index: int) -> Dict[torch.Tensor, torch.Tensor]:
         main_target = self.targets[index]
@@ -721,7 +601,7 @@ class DynamicAudioTextSpeakerEmbDataset(Dataset):
             speaker_emb = speaker_emb.squeeze(0)
 
         # If using mixup and in training mode
-        if self.mixup_alpha > 0.0 and self.data_type == "train":
+        if self.mixup_alpha > 0.0 and self.data_type == "train" and random.random() < self.mixup_alpha:
             attempts = 0
             rand_index = index
             # Force mixup with a different targets, attempt limit is 10 to avoid infinite loop
@@ -767,12 +647,10 @@ class DynamicAudioTextSpeakerEmbDataset(Dataset):
         # Random Truncation
         if self.use_rand_truncation and self.data_type == "train":
             audio = self._random_truncation(audio)
-
-        # White noise insertion
-        if self.insert_white_noise and self.data_type == "train":
-            # dynamically insert white noise
-            white_noise_amp = torch.rand(1) * (self.max_white_noise_amp - self.min_white_noise_amp) + self.min_white_noise_amp
-            audio = audio + white_noise_amp * torch.randn_like(audio)
+        # Background noise insertion or Identity
+        audio = self.background_noise(audio.unsqueeze(0)).squeeze(0)
+        # Impulse response (Reverberation) or Identity
+        audio = self.impulse_response(audio.unsqueeze(0)).squeeze(0)
 
         return audio.squeeze(0).numpy(), transcript, speaker_emb, target
 
