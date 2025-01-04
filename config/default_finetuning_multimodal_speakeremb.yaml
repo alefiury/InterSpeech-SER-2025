@@ -3,7 +3,7 @@ title: SER-Dynamic_Audio_Text_SpkEmb-FineTuning-(Loss-${loss.name})-(BS-${data.u
 wandb_entity: alefiury
 
 loss:
-    name: "ce"
+    name: "focal"
     gamma: 2.0
     alpha: 0.5
     use_weighted_loss: false # Uses "prior" weights as in https://www.isca-archive.org/odyssey_2024/chen24_odyssey.pdf
@@ -28,7 +28,7 @@ datasets:
           target_column: "EmoClass"
 
 data:
-    num_classes: 32
+    num_classes: 8
 
     target_sr: 16000
 
@@ -62,7 +62,7 @@ data:
     }
 
 train:
-    batch_size: 8
+    batch_size: 32
     shuffle: True
     num_workers: 12
 
@@ -74,7 +74,7 @@ model:
     # model_name: "facebook/wav2vec2-xls-r-300m"
     # model_name: "facebook/hubert-large-ls960-ft"
     # model_name: "openai/whisper-large"
-    freeze_audio_backbone: false
+    freeze_audio_backbone: true
     audio_layer_weight_strategy: "per_layer"
     audio_num_feature_layers: 25
     specific_audio_layer_idx: -1
