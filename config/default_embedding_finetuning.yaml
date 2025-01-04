@@ -11,17 +11,19 @@ loss:
 datasets:
     train:
         - name: Train
-          metadata_path: "/raid/alefiury/SER/InterSpeech2025/hubert_ravdess_train.csv"
-          base_dir: "/raid/alefiury/SER/InterSpeech2025/Audio_Speech_Actors_01-24_hubert"
-          filename_column: "filename"
-          target_column: "emotion"
+          metadata_path: "/hadatasets/alef.ferreira/SER/Interspeech/InterSpeech-SER-2025/Dataset/transcribed_canary_train_set.csv"
+          base_dir: "/hadatasets/alef.ferreira/SER/Interspeech/Audios"
+          filename_column: "FileName"
+          transcript_column: "Transcript"
+          target_column: "EmoClass"
 
     val:
         - name: Validation
-          metadata_path: "/raid/alefiury/SER/InterSpeech2025/hubert_ravdess_val.csv"
-          base_dir: "/raid/alefiury/SER/InterSpeech2025/Audio_Speech_Actors_01-24_hubert"
-          filename_column: "filename"
-          target_column: "emotion"
+          metadata_path: "/hadatasets/alef.ferreira/SER/Interspeech/InterSpeech-SER-2025/Dataset/transcribed_canary_validation_set.csv"
+          base_dir: "/hadatasets/alef.ferreira/SER/Interspeech/Audios"
+          filename_column: "FileName"
+          transcript_column: "Transcript"
+          target_column: "EmoClass"
 
 data:
     num_classes: 8

@@ -90,8 +90,23 @@ class PLWrapper(pl.LightningModule):
                 else:
                     raise ValueError(f"Invalid loss: {self.config.loss.name}")
 
+    def compute_class_weights_for_epoch(self, epoch):
+        """
+        Compute the class weights for the current epoch.
+        This function linearly interpolates between the original weights and a uniform distribution.
+        """
+        original_weights = get_classes_weights(self.config)
+
+        r = float(epoch) / float(self.trainer.max_epochs)
+        new_weights = []
+        for w in original_weights:
+            new_w = (1.0 - r) * w + r * 1.0
+            new_weights.append(new_w)
+        return torch.tensor(new_weights, dtype=torch.float)
+
     def train_dataloader(self):
         """Return the training dataloader."""
+        print("========= ENTERING TRAIN DATALOADER =========")
         if self.config.model.model_type.lower() == "xeus" or self.config.model.model_type.lower() == "nest":
             collate_fn = XEUSNestCollate()
         elif self.config.model.model_type.lower() == "dynamic":
@@ -128,7 +143,12 @@ class PLWrapper(pl.LightningModule):
         if self.config.data.get("use_balanced_sampling", False):
             print("Using Balanced Sampling!")
             # Compute sample weights
-            class_weights = get_classes_weights(self.config)
+            if self.config.data.get("use_balanced_sampling_scheduler", False):
+                # Compute the class weights for the current epoch
+                class_weights = self.compute_class_weights_for_epoch(self.current_epoch)
+                print(f"Class weights: {class_weights}")
+            else:
+                class_weights = get_classes_weights(self.config)
             # Apply weights to each sample
             sample_weights = [class_weights[t] for t in self.train_dataset.targets]
             sample_weights = torch.tensor(sample_weights, dtype=torch.float)
@@ -369,6 +389,16 @@ class PLWrapper(pl.LightningModule):
             )
             plt.close(fig)
 
+        if self.config.data.get("use_balanced_sampling_scheduler", False):
+            class_weights = self.compute_class_weights_for_epoch(self.current_epoch)
+            fig = self._plot_class_weights(class_weights)
+            self.logger.log_image(
+                "val/class_weights",
+                [wandb.Image(fig, caption="Class Weights")],
+                self.current_epoch
+            )
+            plt.close(fig)
+
     def _plot_layer_weights_bar_chart(self, layer_weights):
         fig, ax = plt.subplots(figsize=(8, 6))
         ax.bar(range(len(layer_weights)), layer_weights)
@@ -384,4 +414,16 @@ class PLWrapper(pl.LightningModule):
         ax.set_xlabel("Predicted Labels")
         ax.set_ylabel("True Labels")
         ax.set_title("Confusion Matrix")
+        return fig
+
+    def _plot_class_weights(self, class_weights):
+        original_y_max = get_classes_weights(self.config).max().item()
+        fig, ax = plt.subplots(figsize=(8, 6))
+        ax.bar(range(len(class_weights)), class_weights)
+        ax.set_xticks(range(len(class_weights)))
+        plt.ylim(0, original_y_max)
+        ax.set_xlabel("Class")
+        ax.set_ylabel("Weight")
+        ax.set_title("Class Weights")
+        plt.title(f"Epoch {self.current_epoch}")
         return fig

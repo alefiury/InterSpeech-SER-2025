@@ -1,15 +1,15 @@
 #!/bin/bash
 
 # Define variables based on the arguments
-TEST_METADATA_PATH="/raid/alefiury/SER/InterSpeech2025/InterSpeech-SER-2025/Dataset/transcribed_canary_test_set.csv"
+TEST_METADATA_PATH="/hadatasets/alef.ferreira/SER/Interspeech/InterSpeech-SER-2025/Dataset/balanced_transcribed_canary_test_set.csv"
 FILENAME_COLUMN="FileName"
 TARGET_COLUMN="EmoClass"
-BASE_DIR="/raid/alefiury/SER/InterSpeech2025/challenge_dataset/Audios"
+BASE_DIR="/hadatasets/alef.ferreira/SER/Interspeech/Audios"
 
-CONFIG_PATH="/raid/alefiury/SER/InterSpeech2025/InterSpeech-SER-2025/config/default_finetuning.yaml"
-CHECKPOINT_PATH="/raid/alefiury/SER/InterSpeech2025/InterSpeech-SER-2025/src/InterSpeech-SER-2025/hojvyxc8/checkpoints/last.ckpt"
+CONFIG_PATH="/hadatasets/alef.ferreira/SER/Interspeech/InterSpeech-SER-2025/config/default_finetuning_multimodal_spkemb.yaml"
+CHECKPOINT_PATH="/hadatasets/alef.ferreira/SER/Interspeech/InterSpeech-SER-2025/src/InterSpeech-SER-2025/smxofpnw/checkpoints/last.ckpt"
 
-GPU=3
+GPU=6
 
 BATCH_SIZE=32
 NUM_WORKERS=12
