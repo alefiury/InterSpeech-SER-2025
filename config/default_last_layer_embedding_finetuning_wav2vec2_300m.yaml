@@ -3,7 +3,7 @@ title: SER-LastLayer-Embedding-FineTuning-xls-r-300M-(Loss-${loss.name})-(BS-${d
 wandb_entity: alefiury
 
 loss:
-    name: "ce"
+    name: "focal"
     gamma: 2.0
     alpha: 0.5
     use_weighted_loss: false # Uses "prior" weights as in https://www.isca-archive.org/odyssey_2024/chen24_odyssey.pdf
@@ -26,7 +26,7 @@ datasets:
 data:
     num_classes: 8
 
-    use_balanced_sampling: false # If true, the dataset will be balanced based on the inverse frequency of the classes
+    use_balanced_sampling: true # If true, the dataset will be balanced based on the inverse frequency of the classes
 
     use_seqaug: false
 
@@ -50,15 +50,15 @@ train:
 model:
     model_type: "last_layer_embedding"
 
-    # mlp_input_dim: 1024 # Must be adapted to the model
-    mlp_input_dim: 2048 # attpool version
+    mlp_input_dim: 1024 # Must be adapted to the model
+    # mlp_input_dim: 2048 # attpool version
     mlp_hidden_dim: ${model.mlp_input_dim} # Must be adapted to the model, should be the same as mlp_input_dim
     mlp_num_layers: 1
     mlp_output_size: ${data.num_classes}
     mlp_dropout: 0.2
     mlp_activation_func: "relu"
-    # pooling_strategy: "mean" # Take the mean of the sequence
-    pooling_strategy: "attpool" # Attention pooling
+    pooling_strategy: "mean" # Take the mean of the sequence
+    # pooling_strategy: "attpool" # Attention pooling
 
 optimizer:
     name: "adamw"
