@@ -395,15 +395,19 @@ class DynamicDataset(Dataset):
             target = torch.zeros(self.class_num)
             target[main_target] = mix_lambda
             target[rand_target] = 1 - mix_lambda
+
+        elif self.mixup_alpha > 0.0:
+            # One-hot encoding for the target if using mixup in train mode
+            filepath = os.path.join(self.base_dir, main_file)
+            audio, _ = self._load_wav(filepath)
+            target = torch.zeros(self.class_num)
+            target[main_target] = 1.0
+
         else:
             filepath = os.path.join(self.base_dir, main_file)
             audio, _ = self._load_wav(filepath)
             target = main_target
 
-        # One-hot encoding for the target if using mixup in eval mode
-        if self.mixup_alpha > 0.0 and self.data_type != "train":
-            target = torch.zeros(self.class_num)
-            target[main_target] = 1.0
         # Random Truncation
         if self.use_rand_truncation and self.data_type == "train":
             audio = self._random_truncation(audio)
@@ -518,15 +522,18 @@ class DynamicAudioTextDataset(DynamicDataset):
             target = torch.zeros(self.class_num)
             target[main_target] = mix_lambda
             target[rand_target] = 1 - mix_lambda
+
+        elif self.mixup_alpha > 0.0:
+            # One-hot encoding for the target if using mixup in train mode
+            filepath = os.path.join(self.base_dir, main_file)
+            audio, _ = self._load_wav(filepath)
+            target = torch.zeros(self.class_num)
+            target[main_target] = 1.0
+
         else:
             filepath = os.path.join(self.base_dir, main_file)
             audio, _ = self._load_wav(filepath)
             target = main_target
-
-        # One-hot encoding for the target if using mixup in eval mode (because we are using BCEWithLogitsLoss)
-        if self.mixup_alpha > 0.0 and self.data_type != "train":
-            target = torch.zeros(self.class_num)
-            target[main_target] = 1.0
 
         # Random Truncation
         if self.use_rand_truncation and self.data_type == "train":
@@ -647,15 +654,18 @@ class DynamicAudioTextSpeakerEmbDataset(DynamicDataset):
             target = torch.zeros(self.class_num)
             target[main_target] = mix_lambda
             target[rand_target] = 1 - mix_lambda
+
+        elif self.mixup_alpha > 0.0:
+            # One-hot encoding for the target if using mixup in train mode
+            filepath = os.path.join(self.base_dir, main_file)
+            audio, _ = self._load_wav(filepath)
+            target = torch.zeros(self.class_num)
+            target[main_target] = 1.0
+
         else:
             filepath = os.path.join(self.base_dir, main_file)
             audio, _ = self._load_wav(filepath)
             target = main_target
-
-        # One-hot encoding for the target if using mixup in eval mode
-        if self.mixup_alpha > 0.0 and self.data_type != "train":
-            target = torch.zeros(self.class_num)
-            target[main_target] = 1.0
 
         # Random Truncation
         if self.use_rand_truncation and self.data_type == "train":
