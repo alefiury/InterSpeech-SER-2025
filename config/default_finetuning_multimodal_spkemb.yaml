@@ -4,7 +4,6 @@ wandb_entity: alefiury
 
 loss:
     name: "focal"
-    name: "focal"
     gamma: 2.0
     alpha: 0.5
     use_weighted_loss: false # Uses "prior" weights as in https://www.isca-archive.org/odyssey_2024/chen24_odyssey.pdf
@@ -30,7 +29,6 @@ datasets:
 
 data:
     num_classes: 8
-    num_classes: 8
 
     target_sr: 16000
 
@@ -51,7 +49,7 @@ data:
     rir_dir: "/hadatasets/alef.ferreira/SER/Interspeech/InterSpeech-SER-2025/augmentation_data/RIRS_NOISES"
     rir_p: 0.5
 
-    use_text_augmentation: false # If true, text augmentation will be used
+    use_text_augmentation: false # If true, text augmentation will be used (random word deletion)
     text_augmentation_p: 0.5
 
     # label2id must represent the names of the target in the metadata file
@@ -79,8 +77,9 @@ model:
     # model_name: "facebook/wav2vec2-xls-r-300m"
     # model_name: "facebook/hubert-large-ls960-ft"
     # model_name: "openai/whisper-large"
-    freeze_audio_backbone: true
+    freeze_audio_backbone: false
     audio_layer_weight_strategy: "per_layer"
+    # audio_layer_weight_strategy: "weighted_sum"
     audio_num_feature_layers: 25
     specific_audio_layer_idx: -1
     audio_pooling_strategy: "mean"
@@ -102,15 +101,17 @@ model:
     mlp_dropout: 0.2
     mlp_activation_func: "relu"
 
-    # Speaker embedding config
+    # Projection config
+    # Audio
+    audio_feat_dim: 1024
+    audio_proj_dropout: 0.2
+    # Text
+    text_feat_dim: 1024
+    text_proj_dropout: 0.2
+    # Speaker embedding
     speaker_emb_dim: 192
     speaker_emb_projection_dim: 512
-
-    # Projection config
-    audio_feat_dim: 1024
-    text_feat_dim: 1024
-    audio_proj_dropout: 0.2
-    text_proj_dropout: 0.2
+    speaker_emb_dropout: 0.2
 
 optimizer:
     name: "adamw"

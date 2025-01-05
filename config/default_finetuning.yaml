@@ -24,7 +24,7 @@ datasets:
           target_column: "EmoClass"
 
 data:
-    num_classes: 32
+    num_classes: 8
 
     target_sr: 16000
 
@@ -44,6 +44,10 @@ data:
     use_rir: false # If true, RIRs (reverberation) will be added to the audio
     rir_dir: "/raid/alefiury/SER/InterSpeech2025/InterSpeech-SER-2025/augmentation_data/RIRS_NOISES"
     rir_p: 0.5
+
+    # Text augmentation
+    use_text_augmentation: false # If true, text augmentation will be used (random word deletion)
+    text_augmentation_p: 0.5
 
     # label2id must represent the names of the target in the metadata file
     label2id: {

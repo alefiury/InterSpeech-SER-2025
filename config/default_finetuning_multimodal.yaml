@@ -48,6 +48,10 @@ data:
     rir_dir: "/hadatasets/alef.ferreira/SER/Interspeech/InterSpeech-SER-2025/augmentation_data/RIRS_NOISES"
     rir_p: 0.5
 
+    # Text augmentation
+    use_text_augmentation: false # If true, text augmentation will be used (random word deletion)
+    text_augmentation_p: 0.5
+
     # label2id must represent the names of the target in the metadata file
     label2id: {
         "A": 0,
@@ -74,7 +78,8 @@ model:
     # model_name: "facebook/hubert-large-ls960-ft"
     # model_name: "openai/whisper-large"
     freeze_audio_backbone: true
-    audio_layer_weight_strategy: "weighted_sum"
+    audio_layer_weight_strategy: "per_layer"
+    # audio_layer_weight_strategy: "weighted_sum"
     audio_num_feature_layers: 25
     specific_audio_layer_idx: -1
     audio_pooling_strategy: "mean"
@@ -82,8 +87,8 @@ model:
     # Text config
     text_model_name: "intfloat/e5-large-v2"
     freeze_text_backbone: true
-    # text_layer_weight_strategy: "per_layer"
-    text_layer_weight_strategy: "weighted_sum"
+    text_layer_weight_strategy: "per_layer"
+    # text_layer_weight_strategy: "weighted_sum"
     text_num_feature_layers: 25
     specific_text_layer_idx: -1
     text_pooling_strategy: "mean"

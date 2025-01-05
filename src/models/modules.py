@@ -799,18 +799,21 @@ class SERDynamicAudioTextModel(nn.Module):
             # Consider that mlp_input_dim is always equal to the F dimension of the embeddings
             self.text_attpool = AttentiveStatisticsPooling(input_size=int(mlp_input_dim/2))
 
+        # Audio Projection layer
         self.audio_proj = nn.Sequential(
             nn.Linear(audio_feat_dim, audio_feat_dim),
             nn.ReLU(),
             nn.Dropout(audio_proj_dropout),
         )
 
+        # Text Projection layer
         self.text_proj = nn.Sequential(
             nn.Linear(text_feat_dim, text_feat_dim),
             nn.ReLU(),
             nn.Dropout(text_proj_dropout),
         )
 
+        # MLP
         self.mlp = MLPBase(
             input_size=mlp_input_dim,
             hidden_dim=mlp_hidden_dim,
