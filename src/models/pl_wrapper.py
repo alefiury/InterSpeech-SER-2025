@@ -123,7 +123,7 @@ class PLWrapper(pl.LightningModule):
                 processor=processor,
                 text_tokenizer=text_tokenizer,
             )
-        elif self.config.model.model_type.lower() == "dynamic_audio_text_speakeremb":
+        elif self.config.model.model_type.lower() == "dynamic_audio_text_speakeremb" or self.config.model.model_type.lower() == "dynamic_audio_text_speakeremb_melspec":
             processor = AutoFeatureExtractor.from_pretrained(self.config.model.audio_model_name)
             text_tokenizer = AutoTokenizer.from_pretrained(self.config.model.text_model_name)
             collate_fn = DynamicAudioTextSpeakerEmbCollate(
@@ -195,7 +195,7 @@ class PLWrapper(pl.LightningModule):
                 processor=processor,
                 text_tokenizer=text_tokenizer,
             )
-        elif self.config.model.model_type.lower() == "dynamic_audio_text_speakeremb":
+        elif self.config.model.model_type.lower() == "dynamic_audio_text_speakeremb" or self.config.model.model_type.lower() == "dynamic_audio_text_speakeremb_melspec":
             processor = AutoFeatureExtractor.from_pretrained(self.config.model.audio_model_name)
             text_tokenizer = AutoTokenizer.from_pretrained(self.config.model.text_model_name)
             collate_fn = DynamicAudioTextSpeakerEmbCollate(

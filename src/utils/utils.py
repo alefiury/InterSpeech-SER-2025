@@ -139,7 +139,7 @@ def build_dataloaders(config):
             class_num=config.data.num_classes,
             target_sr=config.data.target_sr,
         )
-    elif config.model.model_type.lower() == "dynamic_audio_text_speakeremb":
+    elif config.model.model_type.lower() == "dynamic_audio_text_speakeremb" or config.model.model_type.lower() == "dynamic_audio_text_speakeremb_melspec":
         train_dataset = DynamicAudioTextSpeakerEmbDataset(
             data=train_data,
             base_dir=config.datasets.train[0].base_dir,

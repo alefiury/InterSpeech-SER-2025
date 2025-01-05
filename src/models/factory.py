@@ -5,6 +5,7 @@ from models.modules import (
     SERLastLayerEmbeddingModel,
     SERDynamicAudioTextModel,
     SERDynamicAudioTextModelSpeakerEmb,
+    SERDynamicAudioTextModelSpeakerEmbMelSpec,
     XEUSModel,
     NESTModel
 )
@@ -25,6 +26,8 @@ def create_ser_model(
         return SERDynamicAudioTextModel(**kwargs)
     elif model_type.lower() == "dynamic_audio_text_speakeremb":
         return SERDynamicAudioTextModelSpeakerEmb(**kwargs)
+    elif model_type.lower() == "dynamic_audio_text_speakeremb_melspec":
+        return SERDynamicAudioTextModelSpeakerEmbMelSpec(**kwargs)
     elif model_type.lower() == "embedding":
         return SEREmbeddingModel(**kwargs)
     elif model_type.lower() == "last_layer_embedding":

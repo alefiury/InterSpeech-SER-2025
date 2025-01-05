@@ -19,6 +19,8 @@ try:
 except ImportError:
     EncDecDenoiseMaskedTokenPredModel = None
 
+from models.ced.ced_finetuning import FineTuneCED
+
 
 ACTIVATIONS_FUNCS = {
     "relu": nn.ReLU(),
@@ -1005,6 +1007,103 @@ class SERDynamicAudioTextModelSpeakerEmb(SERDynamicAudioTextModel):
         speaker_emb = self.speaker_emb_proj(speaker_emb)
         # Concatenate audio and text embeddings
         logits_input = torch.cat((audio_embeddings, text_embeddings, speaker_emb), dim=-1)
+        # MLP classification
+        logits = self.mlp(logits_input).squeeze(-1)
+        return logits
+
+
+class SERDynamicAudioTextModelSpeakerEmbMelSpec(SERDynamicAudioTextModel):
+    def __init__(
+        self,
+        # Speaker emb projection
+        speaker_emb_dim: int = 512,
+        speaker_emb_projection_dim: int = 1024,
+        # Audio projection
+        audio_feat_dim: int = 1024,
+        audio_proj_dropout: float = 0.2,
+        # Text projection
+        text_feat_dim: int = 1024,
+        text_proj_dropout: float = 0.2,
+        speaker_emb_dropout: float = 0.2,
+        # MelSpec encoder
+        mel_spec_encoder_pretrained: bool = True,
+        mel_spec_encoder_embedding_dim: int = 768,
+        mel_spec_encoder_proj_size: int = 512,
+        mel_spec_encoder_proj_dropout: float = 0.2,
+        mel_spec_encoder_freeze_backbone: bool = False,
+        **kwargs
+    ):
+        super().__init__(**kwargs)
+        self.speaker_emb_dim = speaker_emb_dim
+
+        # Speaker embedding
+        self.mel_spec_encoder = FineTuneCED(
+            pretrained=mel_spec_encoder_pretrained,
+            embedding_dim=mel_spec_encoder_embedding_dim,
+            proj_size=mel_spec_encoder_proj_size,
+            proj_dropout=mel_spec_encoder_proj_dropout,
+            freeze_backbone_flag=mel_spec_encoder_freeze_backbone,
+        )
+
+        # Speaker embedding
+        self.speaker_emb_proj = nn.Sequential(
+            nn.Linear(speaker_emb_dim, speaker_emb_projection_dim),
+            nn.ReLU(),
+            nn.Dropout(speaker_emb_dropout),
+        )
+
+        # Audio projection
+        self.audio_proj = nn.Sequential(
+            nn.Linear(audio_feat_dim, audio_feat_dim),
+            nn.ReLU(),
+            nn.Dropout(audio_proj_dropout),
+        )
+
+        # Text projection
+        self.text_proj = nn.Sequential(
+            nn.Linear(text_feat_dim, text_feat_dim),
+            nn.ReLU(),
+            nn.Dropout(text_proj_dropout),
+        )
+
+    def _get_embeddings(self, x: Tuple[torch.Tensor, torch.Tensor, torch.Tensor]) -> torch.Tensor:
+        audio, text, speaker_emb = x
+        if self.freeze_audio_backbone:
+            with torch.no_grad():
+                audio_outputs = self.audio_backbone(**audio, output_hidden_states=True)
+        else:
+            audio_outputs = self.audio_backbone(**audio, output_hidden_states=True)
+
+        if self.freeze_text_backbone:
+            with torch.no_grad():
+                text_outputs = self.text_backbone(**text, output_hidden_states=True)
+        else:
+            text_outputs = self.text_backbone(**text, output_hidden_states=True)
+        audio_hidden_states = self._stack_embeddings(audio_outputs.hidden_states)
+        text_hidden_states = self._stack_embeddings(text_outputs.hidden_states)
+
+        return audio_hidden_states, text_hidden_states, speaker_emb
+
+    def _get_mel_spec_embeddings(self, x: Tuple[torch.Tensor, torch.Tensor]) -> torch.Tensor:
+        audio, _, _ = x
+        audio = audio["input_values"]
+        mel_spec_embeddings = self.mel_spec_encoder(audio)
+        return mel_spec_embeddings
+
+    def forward(self, x: Tuple[torch.Tensor, torch.Tensor, torch.Tensor]) -> torch.Tensor:
+        audio_hidden_states, text_hidden_states, speaker_emb = self._get_embeddings(x)
+        # Apply layer weighting
+        audio_embeddings, text_embeddings = self._apply_pooling(audio_hidden_states, text_hidden_states)
+        # Audio projection
+        audio_embeddings = self.audio_proj(audio_embeddings)
+        # Text projection
+        text_embeddings = self.text_proj(text_embeddings)
+        # Speaker embedding projection
+        speaker_emb = self.speaker_emb_proj(speaker_emb)
+        # Mel Spec embeddings
+        mel_spec_embeddings = self._get_mel_spec_embeddings(x)
+        # Concatenate audio and text embeddings
+        logits_input = torch.cat((audio_embeddings, text_embeddings, speaker_emb, mel_spec_embeddings), dim=-1)
         # MLP classification
         logits = self.mlp(logits_input).squeeze(-1)
         return logits

@@ -11,18 +11,20 @@ loss:
 datasets:
     train:
         - name: Train
-          metadata_path: "/hadatasets/alef.ferreira/SER/Interspeech/InterSpeech-SER-2025/Dataset/transcribed_canary_train_set.csv"
-          base_dir: "/hadatasets/alef.ferreira/SER/Interspeech/Audios"
+          metadata_path: "/raid/alefiury/SER/InterSpeech2025/InterSpeech-SER-2025/Dataset/transcribed_canary_train_set.csv"
+          base_dir: "/raid/alefiury/SER/InterSpeech2025/challenge_dataset/Audios"
           filename_column: "FileName"
           transcript_column: "Transcript"
+          speakeremb_base_dir: "/raid/alefiury/SER/InterSpeech2025/challenge_dataset/TitaNet-large"
           target_column: "EmoClass"
 
     val:
         - name: Validation
-          metadata_path: "/hadatasets/alef.ferreira/SER/Interspeech/InterSpeech-SER-2025/Dataset/transcribed_canary_validation_set.csv"
-          base_dir: "/hadatasets/alef.ferreira/SER/Interspeech/Audios"
+          metadata_path: "/raid/alefiury/SER/InterSpeech2025/InterSpeech-SER-2025/Dataset/transcribed_canary_validation_set.csv"
+          base_dir: "/raid/alefiury/SER/InterSpeech2025/challenge_dataset/Audios"
           filename_column: "FileName"
           transcript_column: "Transcript"
+          speakeremb_base_dir: "/raid/alefiury/SER/InterSpeech2025/TitaNet-large"
           target_column: "EmoClass"
 
 data:
@@ -39,13 +41,13 @@ data:
     min_duration: 2.0 # min duration (in seconds), only used if use_rand_truncation is True
 
     use_background_noise: true # If true, background noise will be added to the audio (Music and environmental noise)
-    background_noise_dir: "/hadatasets/alef.ferreira/SER/Interspeech/InterSpeech-SER-2025/augmentation_data/musan"
+    background_noise_dir: "/raid/alefiury/SER/InterSpeech2025/InterSpeech-SER-2025/augmentation_data/musan"
     background_noise_min_snr_in_db: 3.0
     background_noise_max_snr_in_db: 15.0
     background_noise_p: 0.5
 
     use_rir: true # If true, RIRs (reverberation) will be added to the audio
-    rir_dir: "/hadatasets/alef.ferreira/SER/Interspeech/InterSpeech-SER-2025/augmentation_data/RIRS_NOISES"
+    rir_dir: "/raid/alefiury/SER/InterSpeech2025/InterSpeech-SER-2025/augmentation_data/RIRS_NOISES"
     rir_p: 0.5
 
     # Text augmentation

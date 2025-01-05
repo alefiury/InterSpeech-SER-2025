@@ -469,9 +469,9 @@ class DynamicAudioTextDataset(DynamicDataset):
         super().__init__(**kwargs)
         """Initialization"""
         self.transcripts = self.data[transcript_column].values
-
+        self.use_text_augmentation = use_text_augmentation
         # Text augmentation
-        if use_text_augmentation:
+        if self.use_text_augmentation:
             self.text_augmenter = naw.RandomWordAug()
             self.text_augmentation_p = text_augmentation_p
 
@@ -480,13 +480,9 @@ class DynamicAudioTextDataset(DynamicDataset):
         main_file = self.filenames[index]
         transcript = self.transcripts[index]
 
-        print("1", transcript)
-
         # Apply text augmentation
         if self.use_text_augmentation and self.data_type == "train" and random.random() < self.text_augmentation_p:
-            transcript = self.text_augmenter(transcript)
-
-            print("2", transcript)
+            transcript = self.text_augmenter.augment(transcript)[0]
 
         # If using mixup and in training mode
         if self.mixup_alpha > 0.0 and self.data_type == "train" and random.random() < self.mixup_alpha:
