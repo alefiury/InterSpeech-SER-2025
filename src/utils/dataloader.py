@@ -6,6 +6,7 @@ import torch
 import torchaudio
 import numpy as np
 import pandas as pd
+import nlpaug.augmenter.word as naw
 from torch.utils.data import Dataset
 from transformers import WhisperFeatureExtractor
 from torch_audiomentations import AddBackgroundNoise, ApplyImpulseResponse, Identity
@@ -330,7 +331,7 @@ class DynamicDataset(Dataset):
         min_length = int(self.min_duration * self.target_sr)
         len_audio = audio.shape[-1]
 
-        if self.use_rand_truncation and len_audio > min_length:
+        if self.use_rand_truncation and len_audio > min_length and random.random() < 0.5:
             segment_length = random.randint(min_length, len_audio)
 
             max_start = len_audio - segment_length
@@ -460,16 +461,32 @@ class DynamicAudioTextDataset(DynamicDataset):
     def __init__(
         self,
         transcript_column: str,
+        # text augmentation parameters (Optional)
+        use_text_augmentation: Optional[bool] = False,
+        text_augmentation_p: Optional[float] = 0.5,
         **kwargs,
     ):
         super().__init__(**kwargs)
         """Initialization"""
         self.transcripts = self.data[transcript_column].values
 
+        # Text augmentation
+        if use_text_augmentation:
+            self.text_augmenter = naw.RandomWordAug()
+            self.text_augmentation_p = text_augmentation_p
+
     def __getitem__(self, index: int) -> Dict[torch.Tensor, torch.Tensor]:
         main_target = self.targets[index]
         main_file = self.filenames[index]
         transcript = self.transcripts[index]
+
+        print("1", transcript)
+
+        # Apply text augmentation
+        if self.use_text_augmentation and self.data_type == "train" and random.random() < self.text_augmentation_p:
+            transcript = self.text_augmenter(transcript)
+
+            print("2", transcript)
 
         # If using mixup and in training mode
         if self.mixup_alpha > 0.0 and self.data_type == "train" and random.random() < self.mixup_alpha:

@@ -123,6 +123,9 @@ def build_dataloaders(config):
             use_rir=config.data.use_rir,
             rir_dir=config.data.rir_dir,
             rir_p=config.data.rir_p,
+            # text augmentation parameters
+            use_text_augmentation=config.data.use_text_augmentation,
+            text_augmentation_p=config.data.text_augmentation_p,
         )
 
         val_dataset = DynamicAudioTextDataset(

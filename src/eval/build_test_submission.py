@@ -25,7 +25,6 @@ from models.pl_wrapper import PLWrapper
 from utils.dataloader import (
     DynamicDataset,
     DynamicAudioTextDataset,
-    DynamicAudioTextSpeakerEmbDataset,
     EmbeddingDataset,
     LastLayerEmbeddingDataset,
 )
@@ -33,7 +32,6 @@ from utils.dataloader import (
 from utils.dataloader import (
     DynamicCollate,
     DynamicAudioTextCollate,
-    DynamicAudioTextSpeakerEmbCollate,
     XEUSNestCollate,
     EmbeddingCollate,
     LastLayerEmbeddingCollate
@@ -121,27 +119,6 @@ def build_dataloaders(
             processor=processor,
             text_tokenizer=text_tokenizer,
         )
-    elif config.model.model_type.lower() == "dynamic_audio_text_speakeremb":
-        test_dataset = DynamicAudioTextSpeakerEmbDataset(
-            data=test_data,
-            filename_column=config.datasets.train[0].filename_column,
-            transcript_column=config.datasets.train[0].transcript_column,
-            speakeremb_base_dir=config.datasets.train[0].speakeremb_base_dir,
-            target_column="target",
-            base_dir=config.datasets.train[0].base_dir,
-            mixup_alpha=config.data.mixup_alpha,
-            data_type="test",
-            class_num=config.data.num_classes,
-            target_sr=config.data.target_sr,
-        )
-        processor = AutoFeatureExtractor.from_pretrained(config.model.audio_model_name)
-        text_tokenizer = AutoTokenizer.from_pretrained(config.model.text_model_name)
-        collate_fn = DynamicAudioTextSpeakerEmbCollate(
-            target_sr=config.data.target_sr,
-            processor=processor,
-            text_tokenizer=text_tokenizer,
-        )
-
 
     test_dataloader = DataLoader(
         test_dataset,
@@ -180,7 +157,7 @@ def evaluate_model(
     model = model.to(device)
     model.eval()
 
-    targets = []
+    # targets = []
     predictions = []
 
     for batch in tqdm(test_dataloader, desc="Evaluating"):
@@ -198,10 +175,10 @@ def evaluate_model(
         output = F.softmax(output, dim=1)
         output = torch.argmax(output, dim=1)
 
-        targets.extend(target.cpu().numpy())
+        # targets.extend(target.cpu().numpy())
         predictions.extend(output.cpu().numpy())
 
-    return targets, predictions
+    return predictions
 
 
 def main() -> None:
@@ -279,24 +256,34 @@ def main() -> None:
         num_workers=args.num_workers
     )
 
-    targets, predictions = evaluate_model(
+    predictions = evaluate_model(
         config=config,
         test_dataloader=test_dataloader,
         checkpoint_path=args.checkpoint_path,
         device=f"cuda:{args.gpu}"
     )
 
-    accuracy = accuracy_score(targets, predictions)
-    f1 = f1_score(targets, predictions, average="macro")
-    f1_micro = f1_score(targets, predictions, average="micro")
-    recall = recall_score(targets, predictions, average="macro")
-    precision = precision_score(targets, predictions, average="macro")
+    df_test_metadata = pd.read_csv(args.test_metadata_path)
 
-    print(f"Accuracy: {accuracy}")
-    print(f"F1-Macro: {f1}")
-    print(f"F1-Micro: {f1_micro}")
-    print(f"Recall: {recall}")
-    print(f"Precision: {precision}")
+    filenames = df_test_metadata[args.filename_column].tolist()
+
+    label2id = config.data.label2id
+
+    id2label = {v: k for k, v in label2id.items()}
+
+    print(id2label)
+
+    predictions_labels = [id2label[p] for p in predictions]
+
+    df_submission = pd.DataFrame(
+        {
+            "FileName": filenames,
+            "EmoClass": predictions_labels
+        }
+    )
+
+    df_submission.to_csv("/hadatasets/alef.ferreira/SER/Interspeech/submission-bimodal-3dit02ei.csv", index=False)
+
 
 
 if __name__ == "__main__":
