@@ -3,7 +3,7 @@ title: SER-Dynamic_Audio_Text-FineTuning-(Loss-${loss.name})-(BS-${data.use_bala
 wandb_entity: alefiury
 
 loss:
-    name: "ce"
+    name: "focal"
     gamma: 2.0
     alpha: 0.5
     use_weighted_loss: false # Uses "prior" weights as in https://www.isca-archive.org/odyssey_2024/chen24_odyssey.pdf
@@ -73,8 +73,8 @@ model:
     # model_name: "facebook/wav2vec2-xls-r-300m"
     # model_name: "facebook/hubert-large-ls960-ft"
     # model_name: "openai/whisper-large"
-    freeze_audio_backbone: false
-    audio_layer_weight_strategy: "per_layer"
+    freeze_audio_backbone: true
+    audio_layer_weight_strategy: "weighted_sum"
     audio_num_feature_layers: 25
     specific_audio_layer_idx: -1
     audio_pooling_strategy: "mean"
@@ -82,8 +82,8 @@ model:
     # Text config
     text_model_name: "intfloat/e5-large-v2"
     freeze_text_backbone: true
-    text_layer_weight_strategy: "per_layer"
-    # text_layer_weight_strategy: "weighted_sum"
+    # text_layer_weight_strategy: "per_layer"
+    text_layer_weight_strategy: "weighted_sum"
     text_num_feature_layers: 25
     specific_text_layer_idx: -1
     text_pooling_strategy: "mean"
