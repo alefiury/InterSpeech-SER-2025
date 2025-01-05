@@ -17,3 +17,5 @@ pyannote.audio==3.3.2
 webdataset==0.2.100
 datasets==3.2.0
 ipython==8.30.0
+kornia==0.7.4
+nlpaug==1.1.11

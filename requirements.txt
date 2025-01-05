@@ -1,4 +1,6 @@
+kornia==0.7.4
 lightning==2.4.0
+nlpaug==1.1.11
 omegaconf==2.3.0
 pandas==2.2.2
 scikit-learn==1.5.2
