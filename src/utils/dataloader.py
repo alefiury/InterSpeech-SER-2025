@@ -604,17 +604,29 @@ class DynamicAudioTextSpeakerEmbDataset(DynamicDataset):
         self,
         transcript_column: str,
         speakeremb_base_dir: str,
+        # text augmentation parameters (Optional)
+        use_text_augmentation: Optional[bool] = False,
+        text_augmentation_p: Optional[float] = 0.5,
         **kwargs,
     ):
         super().__init__(**kwargs)
         """Initialization"""
         self.speakeremb_base_dir = speakeremb_base_dir
         self.transcripts = self.data[transcript_column].values
+        # Text augmentation
+        self.use_text_augmentation = use_text_augmentation
+        if self.use_text_augmentation:
+            self.text_augmenter = naw.RandomWordAug()
+            self.text_augmentation_p = text_augmentation_p
 
     def __getitem__(self, index: int) -> Dict[torch.Tensor, torch.Tensor]:
         main_target = self.targets[index]
         main_file = self.filenames[index]
         transcript = self.transcripts[index]
+
+        # Apply text augmentation
+        if self.use_text_augmentation and self.data_type == "train" and random.random() < self.text_augmentation_p:
+            transcript = self.text_augmenter.augment(transcript)[0]
 
         speaker_emb = torch.load(os.path.join(self.speakeremb_base_dir, main_file.replace(".wav", ".pt")))
         if speaker_emb.dim() == 2:
@@ -730,6 +742,16 @@ class DynamicAudioTextSpeakerEmbCollate:
                 sampling_rate=self.target_sr,
             )
 
+            # We pad the audios here because the Whisper processor will transform the audios into spectrograms
+            # We want the raw waveform for the MelSpec encoder (CED)
+            audio_lengths = [audio.shape[-1] for audio in audios]
+            max_length = max(audio_lengths)
+            padded_audios = torch.full((len(audios), max_length), self.padding_value)
+            for i, audio in enumerate(audios):
+                padded_audios[i, :audio.shape[-1]] = torch.tensor(audio, dtype=torch.float32)
+
+            processed["wavs"] = padded_audios
+
         return (processed, tokenized_transcripts, speaker_embs), targets
 
 
@@ -769,3 +791,101 @@ class XEUSNestCollate:
         }
 
         return processed, targets
+
+
+class XEUSNestTextCollate:
+    def __init__(
+        self,
+        padding_value: float = 0.0,
+        text_tokenizer = None,
+    ):
+        """
+        Collation function for dynamic batching of audio data.
+
+        Params:
+            padding_value (float): Value to use for padding shorter sequences.
+            processor: A processor or feature extractor to process raw audio
+                       into features if desired.
+        """
+        self.text_tokenizer = text_tokenizer
+        self.padding_value = padding_value
+
+    def __call__(self, batch: List[Tuple[torch.Tensor, torch.Tensor]]) -> Tuple[torch.Tensor, Optional[torch.Tensor], torch.Tensor]:
+        audios, transcripts, targets = zip(*batch)
+
+        audios = [torch.from_numpy(audio) if isinstance(audio, np.ndarray) else audio for audio in audios]
+        targets = torch.stack([t if isinstance(t, torch.Tensor) else torch.tensor(t) for t in targets])
+        # pad audios ana take the length
+        audios_lengths = [audio.shape[-1] for audio in audios]
+        # pad audios
+        max_length = max(audios_lengths)
+
+        padded_audios = torch.full((len(audios), max_length), self.padding_value)
+
+        for i, audio in enumerate(audios):
+            padded_audios[i, :audio.shape[-1]] = audio.float()
+
+        tokenized_transcripts = self.text_tokenizer(
+            transcripts,
+            padding=True,
+            truncation=True,
+            max_length=512,
+            return_tensors="pt"
+        )
+
+        processed = {
+            "wavs": padded_audios,
+            "wav_lengths": torch.tensor(audios_lengths),
+        }
+
+        return (processed, tokenized_transcripts), targets
+
+
+class XEUSNestTextSpeakerEmbCollate:
+    def __init__(
+        self,
+        padding_value: float = 0.0,
+        text_tokenizer = None,
+    ):
+        """
+        Collation function for dynamic batching of audio data.
+
+        Params:
+            padding_value (float): Value to use for padding shorter sequences.
+            processor: A processor or feature extractor to process raw audio
+                       into features if desired.
+        """
+        self.text_tokenizer = text_tokenizer
+        self.padding_value = padding_value
+
+    def __call__(self, batch: List[Tuple[torch.Tensor, torch.Tensor]]) -> Tuple[torch.Tensor, Optional[torch.Tensor], torch.Tensor]:
+        audios, transcripts, speaker_embs, targets = zip(*batch)
+
+        audios = [torch.from_numpy(audio) if isinstance(audio, np.ndarray) else audio for audio in audios]
+        targets = torch.stack([t if isinstance(t, torch.Tensor) else torch.tensor(t) for t in targets])
+        # pad audios ana take the length
+        audios_lengths = [audio.shape[-1] for audio in audios]
+        # pad audios
+        max_length = max(audios_lengths)
+
+        padded_audios = torch.full((len(audios), max_length), self.padding_value)
+
+        for i, audio in enumerate(audios):
+            padded_audios[i, :audio.shape[-1]] = audio.float()
+
+        tokenized_transcripts = self.text_tokenizer(
+            transcripts,
+            padding=True,
+            truncation=True,
+            max_length=512,
+            return_tensors="pt"
+        )
+
+        processed = {
+            "wavs": padded_audios,
+            "wav_lengths": torch.tensor(audios_lengths),
+        }
+
+        speaker_embs = torch.stack([t if isinstance(t, torch.Tensor) else torch.tensor(t) for t in speaker_embs])
+
+        return (processed, tokenized_transcripts, speaker_embs), targets

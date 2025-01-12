@@ -750,7 +750,7 @@ class SERDynamicAudioTextModel(nn.Module):
 
         # Whisper is an encoder-encoder model, we only need the encoder part
         if "whisper" in audio_model_name.lower():
-            self.backbone = self.backbone.encoder
+            self.audio_backbone = self.audio_backbone.encoder
 
         self.freeze_audio_backbone = freeze_audio_backbone
         self.freeze_text_backbone = freeze_text_backbone
@@ -940,6 +940,247 @@ class SERDynamicAudioTextModel(nn.Module):
         return logits
 
 
+class SERXEUSModelTextModel(nn.Module):
+    """
+    Model that uses audio and text backbones to extract embeddings and combines them using an MLP.
+
+    The model supports different layer weighting strategies:
+
+    - 'per_layer': Uses features from a specific layer
+    - 'weighted_sum': Learns weights to combine features from all layers
+
+    And different pooling strategies:
+
+    - 'mean': Simple mean pooling over the sequence dimension
+    - 'attpool': Attentive Statistics Pooling (only available with 'per_layer' strategy)
+    """
+    def __init__(
+        self,
+        # audio
+        audio_checkpoint_path: str = None,
+        freeze_audio_backbone: bool = True,
+        audio_layer_weight_strategy: str = "per_layer",
+        audio_num_feature_layers: int = 25,
+        specific_audio_layer_idx: int = -1,
+        audio_pooling_strategy: str = "mean",
+        # text
+        text_model_name: str = "intfloat/e5-large-v2",
+        freeze_text_backbone: bool = True,
+        text_layer_weight_strategy: str = "per_layer",
+        text_num_feature_layers: int = 25,
+        specific_text_layer_idx: int = -1,
+        text_pooling_strategy: str = "mean",
+        # mlp
+        mlp_input_dim: int = 768,
+        mlp_hidden_dim: int = 1024,
+        mlp_num_layers: int = 2,
+        mlp_output_size: int = 7,
+        mlp_dropout: float = 0.1,
+        mlp_activation_func: str = "relu",
+        # projection
+        audio_feat_dim: int = 1024,
+        text_feat_dim: int = 1024,
+        audio_proj_dropout: float = 0.2,
+        text_proj_dropout: float = 0.2,
+    ):
+        super().__init__()
+        self.audio_backbone, _ = SSLTask.build_model_from_file(
+            None,
+            audio_checkpoint_path,
+        )
+        text_config = AutoConfig.from_pretrained(text_model_name, output_hidden_states=True)
+        self.text_backbone = AutoModel.from_pretrained(text_model_name, config=text_config)
+
+        self.freeze_audio_backbone = freeze_audio_backbone
+        self.freeze_text_backbone = freeze_text_backbone
+        if freeze_audio_backbone:
+            self._freeze_backbone(self.audio_backbone)
+            self.audio_backbone.eval()
+        if freeze_text_backbone:
+            self._freeze_backbone(self.text_backbone)
+            self.text_backbone.eval()
+
+        self.audio_layer_weight_strategy = audio_layer_weight_strategy
+        self.text_layer_weight_strategy = text_layer_weight_strategy
+
+        self.audio_pooling_strategy = audio_pooling_strategy
+        self.text_pooling_strategy = text_pooling_strategy
+
+        # Validate layer_weight_strategy
+        if audio_layer_weight_strategy == "weighted_sum":
+            self.audio_layer_weights = nn.ParameterList(
+                [nn.Parameter(torch.zeros(1)) for _ in range(audio_num_feature_layers)]
+            )
+        elif audio_layer_weight_strategy == "per_layer":
+            if specific_audio_layer_idx < 0:
+                specific_audio_layer_idx = audio_num_feature_layers - 1
+            self.specific_audio_layer_idx = specific_audio_layer_idx
+
+        if text_layer_weight_strategy == "weighted_sum":
+            # self.text_layer_weights = nn.ParameterList(
+            #     [nn.Parameter(torch.zeros(1)) for _ in range(text_num_feature_layers)]
+            # )
+            self.text_layer_weights = nn.ParameterList(
+                [nn.Parameter(torch.randn(1)) for _ in range(text_num_feature_layers)]
+            )
+        elif text_layer_weight_strategy == "per_layer":
+            if specific_text_layer_idx < 0:
+                specific_text_layer_idx = text_num_feature_layers - 1
+            self.specific_text_layer_idx = specific_text_layer_idx
+
+        if audio_pooling_strategy == "attpool" and audio_layer_weight_strategy == "per_layer":
+            # AttentiveStatisticsPooling requires initialization once we know F
+            # Which is half of the MLP input dimension because we concatenate mean and std
+            # Consider that mlp_input_dim is always equal to the F dimension of the embeddings
+            self.audio_attpool = AttentiveStatisticsPooling(input_size=int(mlp_input_dim/2))
+
+        elif text_pooling_strategy == "attpool" and text_layer_weight_strategy == "per_layer":
+            # AttentiveStatisticsPooling requires initialization once we know F
+            # Which is half of the MLP input dimension because we concatenate mean and std
+            # Consider that mlp_input_dim is always equal to the F dimension of the embeddings
+            self.text_attpool = AttentiveStatisticsPooling(input_size=int(mlp_input_dim/2))
+
+        # Audio Projection layer
+        self.audio_proj = nn.Sequential(
+            nn.Linear(audio_feat_dim, audio_feat_dim),
+            nn.ReLU(),
+            nn.Dropout(audio_proj_dropout),
+        )
+
+        # Text Projection layer
+        self.text_proj = nn.Sequential(
+            nn.Linear(text_feat_dim, text_feat_dim),
+            nn.ReLU(),
+            nn.Dropout(text_proj_dropout),
+        )
+
+        # MLP
+        self.mlp = MLPBase(
+            input_size=mlp_input_dim,
+            hidden_dim=mlp_hidden_dim,
+            num_layers=mlp_num_layers,
+            output_size=mlp_output_size,
+            dropout=mlp_dropout,
+            activation_func=mlp_activation_func,
+        )
+
+    def _freeze_backbone(self, model):
+        for param in model.parameters():
+            param.requires_grad = False
+
+    def _stack_embeddings(self, hidden_states: List[torch.Tensor]) -> torch.Tensor:
+        """
+        Stack hidden states of the audio and text backbones.
+        Args:
+            hidden_states: List of hidden states of the audio and text backbones
+        Returns:
+            Stacked hidden states of shape [B, num_layers, T, F]
+        """
+        all_layers = torch.stack(hidden_states)
+        # transform to [B,num_layers,T,F]
+        all_layers = all_layers.permute(1, 0, 2, 3)
+        return all_layers
+
+    def _get_embeddings(self, x: torch.Tensor) -> torch.Tensor:
+        audio, text = x
+        wavs = audio["wavs"]
+        wav_lengths = audio["wav_lengths"]
+
+        if self.freeze_audio_backbone:
+            with torch.no_grad():
+                audio_outputs = self.audio_backbone.encode(wavs, wav_lengths, use_mask=False, use_final_output=False)[0] # get only the hidden states
+        else:
+            audio_outputs = self.audio_backbone.encode(wavs, wav_lengths, use_mask=False, use_final_output=False)[0] # get only the hidden states
+        if self.freeze_text_backbone:
+            with torch.no_grad():
+                text_outputs = self.text_backbone(**text, output_hidden_states=True)
+        else:
+            text_outputs = self.text_backbone(**text, output_hidden_states=True)
+        audio_hidden_states = self._stack_embeddings(audio_outputs)
+        text_hidden_states = self._stack_embeddings(text_outputs.hidden_states)
+
+        return audio_hidden_states, text_hidden_states
+
+    def _specific_layer(self, x: torch.Tensor, layer_idx: int) -> torch.Tensor:
+        return x[:, layer_idx, :]  # [B,T,F]
+
+    def _weighted_sum(self, x: torch.Tensor, modality: str) -> torch.Tensor:
+        """
+        Weighted sum over the layers dimension.
+        Args:
+            x: Input tensor of shape [B, NUM_LAYERS, SEQUENCE_LENGTH, FEATURE_DIM]
+        Returns:
+            Weighted sum tensor of shape [B, SEQUENCE_LENGTH, FEATURE_DIM]
+        """
+
+        B, NUM_LAYERS, SEQ_LEN, FEAT_DIM = x.shape
+        # take the mean of the hidden states over the layers
+        x = x.mean(dim=2)
+        if modality == "audio":
+            layer_weights = torch.stack([w for w in self.audio_layer_weights])
+        elif modality == "text":
+            layer_weights = torch.stack([w for w in self.text_layer_weights])
+        layer_weights = F.softmax(layer_weights, dim=0)
+        layer_weights = layer_weights.view(1, NUM_LAYERS, 1)
+        expanded_weights = layer_weights.expand(B, NUM_LAYERS, FEAT_DIM)
+        # Apply weights to the input
+        weighted_layers = x * expanded_weights
+        # Sum over the layers dimension
+        # Shape: [B, NUM_LAYERS, FEAT_DIM]
+        weighted_sum = weighted_layers.sum(dim=1)
+        # Shape: [B, FEAT_DIM]
+        return weighted_sum
+
+    def _apply_pooling(self, audio_hidden_states: torch.Tensor, text_hidden_states: torch.Tensor) -> torch.Tensor:
+        """
+        Apply the chosen layer_weight_strategy.
+        After weighting:
+        - per_layer: [B,F] -> reshape to [B,1,F]
+        - weighted_sum: [B,F] -> reshape to [B,1,F]
+        - transformer: [B,F] -> reshape to [B,1,F]
+        """
+        # Audio Modality
+        if self.audio_layer_weight_strategy == "per_layer":
+            audio_embeddings = self._specific_layer(audio_hidden_states, self.specific_audio_layer_idx) # [B,T,F]
+            # Attentive Statistics Pooling applied only to the per_layer strategy
+            if self.audio_pooling_strategy == "attpool":
+                audio_embeddings = self.audio_attpool(audio_embeddings)
+            else:
+                audio_embeddings = audio_embeddings.mean(dim=1)
+
+        elif self.audio_layer_weight_strategy == "weighted_sum":
+            audio_embeddings = self._weighted_sum(audio_hidden_states, modality="audio") # [B,T,F]
+
+        # Text Modality
+        if self.text_layer_weight_strategy == "per_layer":
+            text_embeddings = self._specific_layer(text_hidden_states, self.specific_text_layer_idx)
+            # Attentive Statistics Pooling applied only to the per_layer strategy
+            if self.text_pooling_strategy == "attpool":
+                text_embeddings = self.text_attpool(text_embeddings)
+            else:
+                text_embeddings = text_embeddings.mean(dim=1)
+
+        elif self.text_layer_weight_strategy == "weighted_sum":
+            text_embeddings = self._weighted_sum(text_hidden_states, modality="text")
+
+        return audio_embeddings, text_embeddings
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        # Get embeddings
+        audio_hidden_states, text_hidden_states = self._get_embeddings(x)
+        # Apply layer weighting
+        audio_embeddings, text_embeddings = self._apply_pooling(audio_hidden_states, text_hidden_states)
+        # Audio projection
+        audio_embeddings = self.audio_proj(audio_embeddings)
+        # Text projection
+        text_embeddings = self.text_proj(text_embeddings)
+        # Concatenate audio and text embeddings
+        logits_input = torch.cat((audio_embeddings, text_embeddings), dim=-1)  # [B,AF+TF]
+        # MLP classification
+        logits = self.mlp(logits_input).squeeze(-1)
+        return logits
+
+
 class SERDynamicAudioTextModelSpeakerEmb(SERDynamicAudioTextModel):
     def __init__(
         self,
@@ -991,6 +1232,81 @@ class SERDynamicAudioTextModelSpeakerEmb(SERDynamicAudioTextModel):
         else:
             text_outputs = self.text_backbone(**text, output_hidden_states=True)
         audio_hidden_states = self._stack_embeddings(audio_outputs.hidden_states)
+        text_hidden_states = self._stack_embeddings(text_outputs.hidden_states)
+
+        return audio_hidden_states, text_hidden_states, speaker_emb
+
+    def forward(self, x: Tuple[torch.Tensor, torch.Tensor, torch.Tensor]) -> torch.Tensor:
+        audio_hidden_states, text_hidden_states, speaker_emb = self._get_embeddings(x)
+        # Apply layer weighting
+        audio_embeddings, text_embeddings = self._apply_pooling(audio_hidden_states, text_hidden_states)
+        # Audio projection
+        audio_embeddings = self.audio_proj(audio_embeddings)
+        # Text projection
+        text_embeddings = self.text_proj(text_embeddings)
+        # Speaker embedding projection
+        speaker_emb = self.speaker_emb_proj(speaker_emb)
+        # Concatenate audio and text embeddings
+        logits_input = torch.cat((audio_embeddings, text_embeddings, speaker_emb), dim=-1)
+        # MLP classification
+        logits = self.mlp(logits_input).squeeze(-1)
+        return logits
+
+
+class SERXEUSTextModelSpeakerEmb(SERXEUSModelTextModel):
+    def __init__(
+        self,
+        # projection
+        speaker_emb_dim: int = 512,
+        speaker_emb_projection_dim: int = 1024,
+        audio_feat_dim: int = 1024,
+        text_feat_dim: int = 1024,
+        audio_proj_dropout: float = 0.2,
+        text_proj_dropout: float = 0.2,
+        speaker_emb_dropout: float = 0.2,
+        **kwargs
+    ):
+        super().__init__(**kwargs)
+        self.speaker_emb_dim = speaker_emb_dim
+
+        # Speaker embedding
+        self.speaker_emb_proj = nn.Sequential(
+            nn.Linear(speaker_emb_dim, speaker_emb_projection_dim),
+            nn.ReLU(),
+            nn.Dropout(speaker_emb_dropout),
+        )
+
+        # Audio projection
+        self.audio_proj = nn.Sequential(
+            nn.Linear(audio_feat_dim, audio_feat_dim),
+            nn.ReLU(),
+            nn.Dropout(audio_proj_dropout),
+        )
+
+        # Text projection
+        self.text_proj = nn.Sequential(
+            nn.Linear(text_feat_dim, text_feat_dim),
+            nn.ReLU(),
+            nn.Dropout(text_proj_dropout),
+        )
+
+    def _get_embeddings(self, x: Tuple[torch.Tensor, torch.Tensor, torch.Tensor]) -> torch.Tensor:
+        audio, text, speaker_emb = x
+        wavs = audio["wavs"]
+        wav_lengths = audio["wav_lengths"]
+
+        if self.freeze_audio_backbone:
+            with torch.no_grad():
+                audio_outputs = self.audio_backbone.encode(wavs, wav_lengths, use_mask=False, use_final_output=False)[0] # get only the hidden states
+        else:
+            audio_outputs = self.audio_backbone.encode(wavs, wav_lengths, use_mask=False, use_final_output=False)[0] # get only the hidden states
+
+        if self.freeze_text_backbone:
+            with torch.no_grad():
+                text_outputs = self.text_backbone(**text, output_hidden_states=True)
+        else:
+            text_outputs = self.text_backbone(**text, output_hidden_states=True)
+        audio_hidden_states = self._stack_embeddings(audio_outputs)
         text_hidden_states = self._stack_embeddings(text_outputs.hidden_states)
 
         return audio_hidden_states, text_hidden_states, speaker_emb
@@ -1067,7 +1383,12 @@ class SERDynamicAudioTextModelSpeakerEmbMelSpec(SERDynamicAudioTextModel):
         )
 
     def _get_embeddings(self, x: Tuple[torch.Tensor, torch.Tensor, torch.Tensor]) -> torch.Tensor:
+        wavs_flag = False
         audio, text, speaker_emb = x
+        # Remove "wavs" in case the model is Whisper
+        if "wavs" in audio:
+            wavs = audio.pop("wavs")
+            wavs_flag = True
         if self.freeze_audio_backbone:
             with torch.no_grad():
                 audio_outputs = self.audio_backbone(**audio, output_hidden_states=True)
@@ -1082,11 +1403,133 @@ class SERDynamicAudioTextModelSpeakerEmbMelSpec(SERDynamicAudioTextModel):
         audio_hidden_states = self._stack_embeddings(audio_outputs.hidden_states)
         text_hidden_states = self._stack_embeddings(text_outputs.hidden_states)
 
+        if wavs_flag:
+            audio["wavs"] = wavs
+
         return audio_hidden_states, text_hidden_states, speaker_emb
 
     def _get_mel_spec_embeddings(self, x: Tuple[torch.Tensor, torch.Tensor]) -> torch.Tensor:
         audio, _, _ = x
-        audio = audio["input_values"]
+        if "wavs" in audio:
+            audio = audio["wavs"]
+        # "input_features" is specific for whisper
+        elif "input_features" in audio:
+            audio = audio["input_features"]
+        else:
+            audio = audio["input_values"]
+        mel_spec_embeddings = self.mel_spec_encoder(audio)
+        return mel_spec_embeddings
+
+    def forward(self, x: Tuple[torch.Tensor, torch.Tensor, torch.Tensor]) -> torch.Tensor:
+        audio_hidden_states, text_hidden_states, speaker_emb = self._get_embeddings(x)
+        # Apply layer weighting
+        audio_embeddings, text_embeddings = self._apply_pooling(audio_hidden_states, text_hidden_states)
+        # Audio projection
+        audio_embeddings = self.audio_proj(audio_embeddings)
+        # Text projection
+        text_embeddings = self.text_proj(text_embeddings)
+        # Speaker embedding projection
+        speaker_emb = self.speaker_emb_proj(speaker_emb)
+        # Mel Spec embeddings
+        mel_spec_embeddings = self._get_mel_spec_embeddings(x)
+        # Concatenate audio and text embeddings
+        logits_input = torch.cat((audio_embeddings, text_embeddings, speaker_emb, mel_spec_embeddings), dim=-1)
+        # MLP classification
+        logits = self.mlp(logits_input).squeeze(-1)
+        return logits
+
+
+class SERXEUSTextModelSpeakerEmbMelSpec(SERXEUSModelTextModel):
+    def __init__(
+        self,
+        # Speaker emb projection
+        speaker_emb_dim: int = 512,
+        speaker_emb_projection_dim: int = 1024,
+        # Audio projection
+        audio_feat_dim: int = 1024,
+        audio_proj_dropout: float = 0.2,
+        # Text projection
+        text_feat_dim: int = 1024,
+        text_proj_dropout: float = 0.2,
+        speaker_emb_dropout: float = 0.2,
+        # MelSpec encoder
+        mel_spec_encoder_pretrained: bool = True,
+        mel_spec_encoder_embedding_dim: int = 768,
+        mel_spec_encoder_proj_size: int = 512,
+        mel_spec_encoder_proj_dropout: float = 0.2,
+        mel_spec_encoder_freeze_backbone: bool = False,
+        **kwargs
+    ):
+        super().__init__(**kwargs)
+        self.speaker_emb_dim = speaker_emb_dim
+
+        # Speaker embedding
+        self.mel_spec_encoder = FineTuneCED(
+            pretrained=mel_spec_encoder_pretrained,
+            embedding_dim=mel_spec_encoder_embedding_dim,
+            proj_size=mel_spec_encoder_proj_size,
+            proj_dropout=mel_spec_encoder_proj_dropout,
+            freeze_backbone_flag=mel_spec_encoder_freeze_backbone,
+        )
+
+        # Speaker embedding
+        self.speaker_emb_proj = nn.Sequential(
+            nn.Linear(speaker_emb_dim, speaker_emb_projection_dim),
+            nn.ReLU(),
+            nn.Dropout(speaker_emb_dropout),
+        )
+
+        # Audio projection
+        self.audio_proj = nn.Sequential(
+            nn.Linear(audio_feat_dim, audio_feat_dim),
+            nn.ReLU(),
+            nn.Dropout(audio_proj_dropout),
+        )
+
+        # Text projection
+        self.text_proj = nn.Sequential(
+            nn.Linear(text_feat_dim, text_feat_dim),
+            nn.ReLU(),
+            nn.Dropout(text_proj_dropout),
+        )
+
+    def _get_embeddings(self, x: Tuple[torch.Tensor, torch.Tensor, torch.Tensor]) -> torch.Tensor:
+        wavs_flag = False
+        audio, text, speaker_emb = x
+        wavs = audio["wavs"]
+        wav_lengths = audio["wav_lengths"]
+        # Remove "wavs" in case the model is Whisper
+        if "wavs" in audio:
+            wavs = audio.pop("wavs")
+            wavs_flag = True
+        if self.freeze_audio_backbone:
+            with torch.no_grad():
+                audio_outputs = self.audio_backbone.encode(wavs, wav_lengths, use_mask=False, use_final_output=False)[0]
+        else:
+            audio_outputs = self.audio_backbone.encode(wavs, wav_lengths, use_mask=False, use_final_output=False)[0]
+
+        if self.freeze_text_backbone:
+            with torch.no_grad():
+                text_outputs = self.text_backbone(**text, output_hidden_states=True)
+        else:
+            text_outputs = self.text_backbone(**text, output_hidden_states=True)
+        audio_hidden_states = self._stack_embeddings(audio_outputs)
+        text_hidden_states = self._stack_embeddings(text_outputs.hidden_states)
+
+        if wavs_flag:
+            audio["wavs"] = wavs
+
+        return audio_hidden_states, text_hidden_states, speaker_emb
+
+    def _get_mel_spec_embeddings(self, x: Tuple[torch.Tensor, torch.Tensor]) -> torch.Tensor:
+        audio, _, _ = x
+        if "wavs" in audio:
+            audio = audio["wavs"]
+        # "input_features" is specific for whisper
+        elif "input_features" in audio:
+            audio = audio["input_features"]
+        else:
+            audio = audio["input_values"]
         mel_spec_embeddings = self.mel_spec_encoder(audio)
         return mel_spec_embeddings
 

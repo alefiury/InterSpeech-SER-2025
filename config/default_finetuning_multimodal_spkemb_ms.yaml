@@ -1,4 +1,4 @@
-title: SER-Dynamic_Audio_Text_SpkEmb_MelSpec-FineTuning-(Loss-${loss.name})-(BS-${data.use_balanced_sampling})-(${model.audio_model_name})-(FreezeBackbone-${model.freeze_audio_backbone})-(LayerStrategy-${model.audio_layer_weight_strategy})-(Pooling-${model.audio_pooling_strategy})-(${model.text_model_name})-(FreezeBackbone-${model.freeze_text_backbone})-(LayerStrategy-${model.text_layer_weight_strategy})-(Pooling-${model.text_pooling_strategy})-(epochs-${trainer.max_epochs})-(bs-${train.batch_size})-(LR-${optimizer.params.learning_rate})
+title: SER-Dynamic_Audio_Text_SpkEmb_MelSpec-FineTuning-(Loss-${loss.name})-(BS-${data.use_balanced_sampling})-(${model.audio_model_name})-(FreezeBackbone-${model.freeze_audio_backbone})-(LayerStrategy-${model.audio_layer_weight_strategy})-(Pooling-${model.audio_pooling_strategy})-(${model.text_model_name})-(FreezeBackbone-${model.freeze_text_backbone})-(LayerStrategy-${model.text_layer_weight_strategy})-(Pooling-${model.text_pooling_strategy})-(TextAug${data.use_text_augmentation})-(epochs-${trainer.max_epochs})-(bs-${train.batch_size})-(LR-${optimizer.params.learning_rate})
 
 wandb_entity: alefiury
 
@@ -11,20 +11,20 @@ loss:
 datasets:
     train:
         - name: Train
-          metadata_path: "/raid/alefiury/SER/InterSpeech2025/InterSpeech-SER-2025/Dataset/transcribed_canary_train_set.csv"
-          base_dir: "/raid/alefiury/SER/InterSpeech2025/challenge_dataset/Audios"
+          metadata_path: "/hadatasets/alef.ferreira/SER/Interspeech/InterSpeech-SER-2025/Dataset/transcribed_canary_train_set.csv"
+          base_dir: "/hadatasets/alef.ferreira/SER/Interspeech/Audios"
           filename_column: "FileName"
           transcript_column: "Transcript"
-          speakeremb_base_dir: "/raid/alefiury/SER/InterSpeech2025/challenge_dataset/TitaNet-large"
+          speakeremb_base_dir: "/hadatasets/alef.ferreira/SER/Interspeech/TitaNet-large"
           target_column: "EmoClass"
 
     val:
         - name: Validation
-          metadata_path: "/raid/alefiury/SER/InterSpeech2025/InterSpeech-SER-2025/Dataset/transcribed_canary_validation_set.csv"
-          base_dir: "/raid/alefiury/SER/InterSpeech2025/challenge_dataset/Audios"
+          metadata_path: "/hadatasets/alef.ferreira/SER/Interspeech/InterSpeech-SER-2025/Dataset/transcribed_canary_validation_set.csv"
+          base_dir: "/hadatasets/alef.ferreira/SER/Interspeech/Audios"
           filename_column: "FileName"
           transcript_column: "Transcript"
-          speakeremb_base_dir: "/raid/alefiury/SER/InterSpeech2025/TitaNet-large"
+          speakeremb_base_dir: "/hadatasets/alef.ferreira/SER/Interspeech/TitaNet-large"
           target_column: "EmoClass"
 
 data:
@@ -40,13 +40,13 @@ data:
     min_duration: 2.0 # min duration (in seconds), only used if use_rand_truncation is True
 
     use_background_noise: true # If true, background noise will be added to the audio (Music and environmental noise)
-    background_noise_dir: "/raid/alefiury/SER/InterSpeech2025/InterSpeech-SER-2025/augmentation_data/musan"
+    background_noise_dir: "/hadatasets/alef.ferreira/SER/Interspeech/InterSpeech-SER-2025/augmentation_data/musan"
     background_noise_min_snr_in_db: 3.0
     background_noise_max_snr_in_db: 15.0
     background_noise_p: 0.5
 
     use_rir: true # If true, RIRs (reverberation) will be added to the audio
-    rir_dir: "/raid/alefiury/SER/InterSpeech2025/InterSpeech-SER-2025/augmentation_data/RIRS_NOISES"
+    rir_dir: "/hadatasets/alef.ferreira/SER/Interspeech/InterSpeech-SER-2025/augmentation_data/RIRS_NOISES"
     rir_p: 0.5
 
     use_text_augmentation: true # If true, text augmentation will be used (random word deletion)
@@ -65,7 +65,7 @@ data:
     }
 
 train:
-    batch_size: 16
+    batch_size: 32
     shuffle: True
     num_workers: 12
 
@@ -73,10 +73,10 @@ model:
     model_type: "dynamic_audio_text_speakeremb_melspec"
 
     # Audio config
-    audio_model_name: "microsoft/wavlm-large"
-    # model_name: "facebook/wav2vec2-xls-r-300m"
-    # model_name: "facebook/hubert-large-ls960-ft"
-    # model_name: "openai/whisper-large"
+    # audio_model_name: "microsoft/wavlm-large"
+    # audio_model_name: "facebook/wav2vec2-xls-r-300m"
+    # audio_model_name: "facebook/hubert-large-ls960-ft"
+    audio_model_name: "openai/whisper-large-v3"
     freeze_audio_backbone: true
     audio_layer_weight_strategy: "per_layer"
     # audio_layer_weight_strategy: "weighted_sum"
@@ -94,16 +94,18 @@ model:
     text_pooling_strategy: "mean"
 
     # MLP config
-    mlp_input_dim: 3072 # Must be adapted to the model, when using attention pooling, this value should be the double of the model hidden size
+    # mlp_input_dim: 3072 # Must be adapted to the model, when using attention pooling, this value should be the double of the model hidden size
+    mlp_input_dim: 3328 # For Whisper-large
     mlp_hidden_dim: ${model.mlp_input_dim} # Must be adapted to the model, should be the same as mlp_input_dim
-    mlp_num_layers: 1
+    mlp_num_layers: 2
     mlp_output_size: ${data.num_classes}
     mlp_dropout: 0.2
     mlp_activation_func: "relu"
 
     # Projection config
     # Audio
-    audio_feat_dim: 1024
+    # audio_feat_dim: 1024
+    audio_feat_dim: 1280 # Whisper-large
     audio_proj_dropout: 0.2
     # Text
     text_feat_dim: 1024
@@ -115,8 +117,8 @@ model:
 
     # Mel-Spectrogram Encoder
     mel_spec_encoder_pretrained: true
-    # mel_spec_encoder_embedding_dim: 384
-    mel_spec_encoder_embedding_dim: 768
+    mel_spec_encoder_embedding_dim: 384 # small model
+    # mel_spec_encoder_embedding_dim: 768 # base model
     mel_spec_encoder_proj_size: 512
     mel_spec_encoder_proj_dropout: 0.2
     mel_spec_encoder_freeze_backbone: false

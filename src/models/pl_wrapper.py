@@ -27,7 +27,9 @@ from utils.dataloader import (
     DynamicAudioTextSpeakerEmbCollate,
     XEUSNestCollate,
     EmbeddingCollate,
-    LastLayerEmbeddingCollate
+    LastLayerEmbeddingCollate,
+    XEUSNestTextCollate,
+    XEUSNestTextSpeakerEmbCollate
 )
 
 
@@ -106,7 +108,6 @@ class PLWrapper(pl.LightningModule):
 
     def train_dataloader(self):
         """Return the training dataloader."""
-        print("========= ENTERING TRAIN DATALOADER =========")
         if self.config.model.model_type.lower() == "xeus" or self.config.model.model_type.lower() == "nest":
             collate_fn = XEUSNestCollate()
         elif self.config.model.model_type.lower() == "dynamic":
@@ -123,7 +124,8 @@ class PLWrapper(pl.LightningModule):
                 processor=processor,
                 text_tokenizer=text_tokenizer,
             )
-        elif self.config.model.model_type.lower() == "dynamic_audio_text_speakeremb" or self.config.model.model_type.lower() == "dynamic_audio_text_speakeremb_melspec":
+        elif self.config.model.model_type.lower() == "dynamic_audio_text_speakeremb" \
+            or self.config.model.model_type.lower() == "dynamic_audio_text_speakeremb_melspec":
             processor = AutoFeatureExtractor.from_pretrained(self.config.model.audio_model_name)
             text_tokenizer = AutoTokenizer.from_pretrained(self.config.model.text_model_name)
             collate_fn = DynamicAudioTextSpeakerEmbCollate(
@@ -135,6 +137,17 @@ class PLWrapper(pl.LightningModule):
             collate_fn = EmbeddingCollate()
         elif self.config.model.model_type.lower() == "last_layer_embedding":
             collate_fn = LastLayerEmbeddingCollate()
+        elif self.config.model.model_type.lower() == "xeus_text":
+            text_tokenizer = AutoTokenizer.from_pretrained(self.config.model.text_model_name)
+            collate_fn = XEUSNestTextCollate(
+                text_tokenizer=text_tokenizer,
+            )
+        elif self.config.model.model_type.lower() == "xeus_text_speakeremb" \
+            or self.config.model.model_type.lower() == "xeus_text_speakeremb_melspec":
+            text_tokenizer = AutoTokenizer.from_pretrained(self.config.model.text_model_name)
+            collate_fn = XEUSNestTextSpeakerEmbCollate(
+                text_tokenizer=text_tokenizer,
+            )
         else:
             raise ValueError(f"Invalid model type: {self.config.model.model_type}")
 
@@ -195,7 +208,8 @@ class PLWrapper(pl.LightningModule):
                 processor=processor,
                 text_tokenizer=text_tokenizer,
             )
-        elif self.config.model.model_type.lower() == "dynamic_audio_text_speakeremb" or self.config.model.model_type.lower() == "dynamic_audio_text_speakeremb_melspec":
+        elif self.config.model.model_type.lower() == "dynamic_audio_text_speakeremb" \
+            or self.config.model.model_type.lower() == "dynamic_audio_text_speakeremb_melspec":
             processor = AutoFeatureExtractor.from_pretrained(self.config.model.audio_model_name)
             text_tokenizer = AutoTokenizer.from_pretrained(self.config.model.text_model_name)
             collate_fn = DynamicAudioTextSpeakerEmbCollate(
@@ -207,6 +221,17 @@ class PLWrapper(pl.LightningModule):
             collate_fn = EmbeddingCollate()
         elif self.config.model.model_type.lower() == "last_layer_embedding":
             collate_fn = LastLayerEmbeddingCollate()
+        elif self.config.model.model_type.lower() == "xeus_text":
+            text_tokenizer = AutoTokenizer.from_pretrained(self.config.model.text_model_name)
+            collate_fn = XEUSNestTextCollate(
+                text_tokenizer=text_tokenizer,
+            )
+        elif self.config.model.model_type.lower() == "xeus_text_speakeremb" \
+            or self.config.model.model_type.lower() == "xeus_text_speakeremb_melspec":
+            text_tokenizer = AutoTokenizer.from_pretrained(self.config.model.text_model_name)
+            collate_fn = XEUSNestTextSpeakerEmbCollate(
+                text_tokenizer=text_tokenizer,
+            )
         else:
             raise ValueError(f"Invalid model type: {self.config.model.model_type}")
         return torch.utils.data.DataLoader(

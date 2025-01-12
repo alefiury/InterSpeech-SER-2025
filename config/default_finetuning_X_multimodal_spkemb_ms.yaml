@@ -1,4 +1,4 @@
-title: SER-Dynamic_Audio_Text_SpkEmb-FineTuning-(Loss-${loss.name})-(BS-${data.use_balanced_sampling})-(${model.audio_model_name})-(FreezeBackbone-${model.freeze_audio_backbone})-(LayerStrategy-${model.audio_layer_weight_strategy})-(Pooling-${model.audio_pooling_strategy})-(${model.text_model_name})-(FreezeBackbone-${model.freeze_text_backbone})-(LayerStrategy-${model.text_layer_weight_strategy})-(Pooling-${model.text_pooling_strategy})-(epochs-${trainer.max_epochs})-(bs-${train.batch_size})-(LR-${optimizer.params.learning_rate})
+title: SER-XEUS_Text_SpkEmb_MelSpec-FineTuning-(Loss-${loss.name})-(BS-${data.use_balanced_sampling})-(BS-Scheduler-${data.use_balanced_sampling_scheduler})-(TextAug-${data.use_text_augmentation})-(FreezeBackbone-${model.freeze_audio_backbone})-(LayerStrategy-${model.audio_layer_weight_strategy})-(Pooling-${model.audio_pooling_strategy})-(${model.text_model_name})-(FreezeBackbone-${model.freeze_text_backbone})-(LayerStrategy-${model.text_layer_weight_strategy})-(Pooling-${model.text_pooling_strategy})-(epochs-${trainer.max_epochs})-(bs-${train.batch_size})-(LR-${optimizer.params.learning_rate})
 
 wandb_entity: alefiury
 
@@ -33,6 +33,7 @@ data:
     target_sr: 16000
 
     use_balanced_sampling: false # If true, the dataset will be balanced based on the inverse frequency of the classes
+    use_balanced_sampling_scheduler: false # If true, the dataset will be balanced based on the inverse frequency of the classes, but the weights will be updated during training
 
     mixup_alpha: 0.0 # 0.0 to disable mixup, if you want to use mixup, set this value to 0.5 (recommended)
 
@@ -49,6 +50,7 @@ data:
     rir_dir: "/hadatasets/alef.ferreira/SER/Interspeech/InterSpeech-SER-2025/augmentation_data/RIRS_NOISES"
     rir_p: 0.5
 
+    # Text augmentation
     use_text_augmentation: true # If true, text augmentation will be used (random word deletion)
     text_augmentation_p: 0.5
 
@@ -65,22 +67,18 @@ data:
     }
 
 train:
-    batch_size: 16
+    batch_size: 32
     shuffle: True
     num_workers: 12
 
 model:
-    model_type: "dynamic_audio_text_speakeremb"
+    model_type: "xeus_text_speakeremb_melspec"
 
     # Audio config
-    audio_model_name: "microsoft/wavlm-large"
-    # model_name: "facebook/wav2vec2-xls-r-300m"
-    # model_name: "facebook/hubert-large-ls960-ft"
-    # model_name: "openai/whisper-large"
-    freeze_audio_backbone: false
+    audio_checkpoint_path: "/hadatasets/alef.ferreira/SER/Interspeech/InterSpeech-SER-2025/ssl_checkpoints/XEUS/xeus_checkpoint.pth"
+    freeze_audio_backbone: true
     audio_layer_weight_strategy: "per_layer"
-    # audio_layer_weight_strategy: "weighted_sum"
-    audio_num_feature_layers: 25
+    audio_num_feature_layers: 19
     specific_audio_layer_idx: -1
     audio_pooling_strategy: "mean"
 
@@ -94,7 +92,7 @@ model:
     text_pooling_strategy: "mean"
 
     # MLP config
-    mlp_input_dim: 2560 # Must be adapted to the model, when using attention pooling, this value should be the double of the model hidden size
+    mlp_input_dim: 3072 # Must be adapted to the model, when using attention pooling, this value should be the double of the model hidden size
     mlp_hidden_dim: ${model.mlp_input_dim} # Must be adapted to the model, should be the same as mlp_input_dim
     mlp_num_layers: 1
     mlp_output_size: ${data.num_classes}
@@ -104,14 +102,22 @@ model:
     # Projection config
     # Audio
     audio_feat_dim: 1024
-    audio_proj_dropout: 0.2
-    # Text
     text_feat_dim: 1024
+    # Text
+    audio_proj_dropout: 0.2
     text_proj_dropout: 0.2
     # Speaker embedding
     speaker_emb_dim: 192
     speaker_emb_projection_dim: 512
     speaker_emb_dropout: 0.2
+
+    # Mel-Spectrogram Encoder
+    mel_spec_encoder_pretrained: true
+    mel_spec_encoder_embedding_dim: 384 # small model
+    # mel_spec_encoder_embedding_dim: 768 # base model
+    mel_spec_encoder_proj_size: 512
+    mel_spec_encoder_proj_dropout: 0.2
+    mel_spec_encoder_freeze_backbone: false
 
 optimizer:
     name: "adamw"
@@ -128,9 +134,15 @@ scheduler:
         warmup_lr: 500
 
 tags:
+    - XEUS
     - ${train.batch_size}-BS
     - LR-${optimizer.params.learning_rate}
     - WD-${optimizer.params.weight_decay}
+    - BS-${data.use_balanced_sampling}
+    - Mixup-${data.mixup_alpha}
+    - RTrunc-${data.use_rand_truncation}
+    - BNoise-${data.use_background_noise}
+    - RIR-${data.use_rir}
     - ${model.mlp_input_dim}-AH
     - ${model.mlp_hidden_dim}-HL
     - ${model.mlp_num_layers}-IS
@@ -143,8 +155,9 @@ trainer:
     log_every_n_steps: 10
     gradient_clip_val: 10.0
     gradient_clip_algorithm: "norm"
-    val_check_interval: 1.0 # Every 1 epoch
+    val_check_interval: 1.0
     accumulate_grad_batches: 1
+    reload_dataloaders_every_n_epochs: 0 # This should be set to 1 if "data.use_balanced_sampling_scheduler" is True
 
 model_checkpoint:
     mode: "max"

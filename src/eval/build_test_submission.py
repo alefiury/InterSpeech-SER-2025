@@ -25,6 +25,7 @@ from models.pl_wrapper import PLWrapper
 from utils.dataloader import (
     DynamicDataset,
     DynamicAudioTextDataset,
+    DynamicAudioTextSpeakerEmbDataset,
     EmbeddingDataset,
     LastLayerEmbeddingDataset,
 )
@@ -32,6 +33,7 @@ from utils.dataloader import (
 from utils.dataloader import (
     DynamicCollate,
     DynamicAudioTextCollate,
+    DynamicAudioTextSpeakerEmbCollate,
     XEUSNestCollate,
     EmbeddingCollate,
     LastLayerEmbeddingCollate
@@ -115,6 +117,26 @@ def build_dataloaders(
         processor = AutoFeatureExtractor.from_pretrained(config.model.audio_model_name)
         text_tokenizer = AutoTokenizer.from_pretrained(config.model.text_model_name)
         collate_fn = DynamicAudioTextCollate(
+            target_sr=config.data.target_sr,
+            processor=processor,
+            text_tokenizer=text_tokenizer,
+        )
+    elif config.model.model_type.lower() == "dynamic_audio_text_speakeremb" or config.model.model_type.lower() == "dynamic_audio_text_speakeremb_melspec":
+        test_dataset = DynamicAudioTextSpeakerEmbDataset(
+            data=test_data,
+            filename_column=config.datasets.train[0].filename_column,
+            transcript_column=config.datasets.train[0].transcript_column,
+            speakeremb_base_dir=config.datasets.train[0].speakeremb_base_dir,
+            target_column="target",
+            base_dir=config.datasets.train[0].base_dir,
+            mixup_alpha=config.data.mixup_alpha,
+            data_type="test",
+            class_num=config.data.num_classes,
+            target_sr=config.data.target_sr,
+        )
+        processor = AutoFeatureExtractor.from_pretrained(config.model.audio_model_name)
+        text_tokenizer = AutoTokenizer.from_pretrained(config.model.text_model_name)
+        collate_fn = DynamicAudioTextSpeakerEmbCollate(
             target_sr=config.data.target_sr,
             processor=processor,
             text_tokenizer=text_tokenizer,
@@ -282,7 +304,9 @@ def main() -> None:
         }
     )
 
-    df_submission.to_csv("/hadatasets/alef.ferreira/SER/Interspeech/submission-bimodal-3dit02ei.csv", index=False)
+    print(df_submission["EmoClass"].value_counts())
+
+    df_submission.to_csv("/hadatasets/alef.ferreira/SER/Interspeech/submission-bimodal-ambjo5o9.csv", index=False)
 
 
 

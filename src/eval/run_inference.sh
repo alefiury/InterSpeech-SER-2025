@@ -6,10 +6,10 @@ FILENAME_COLUMN="FileName"
 TARGET_COLUMN="EmoClass"
 BASE_DIR="/hadatasets/alef.ferreira/SER/Interspeech/Audios"
 
-CONFIG_PATH="/hadatasets/alef.ferreira/SER/Interspeech/InterSpeech-SER-2025/config/default_finetuning_multimodal_spkemb.yaml"
-CHECKPOINT_PATH="/hadatasets/alef.ferreira/SER/Interspeech/InterSpeech-SER-2025/src/InterSpeech-SER-2025/smxofpnw/checkpoints/last.ckpt"
+CONFIG_PATH="/hadatasets/alef.ferreira/SER/Interspeech/InterSpeech-SER-2025/config/default_finetuning_X_multimodal.yaml"
+CHECKPOINT_PATH="/hadatasets/alef.ferreira/SER/Interspeech/InterSpeech-SER-2025/src/InterSpeech-SER-2025/00er4q1r/checkpoints/last.ckpt"
 
-GPU=6
+GPU=4
 
 BATCH_SIZE=32
 NUM_WORKERS=12

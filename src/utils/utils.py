@@ -100,7 +100,8 @@ def build_dataloaders(config):
             class_num=config.data.num_classes,
             target_sr=config.data.target_sr,
         )
-    elif config.model.model_type.lower() == "dynamic_audio_text":
+    elif config.model.model_type.lower() == "dynamic_audio_text" \
+        or config.model.model_type.lower() == "xeus_text":
         train_dataset = DynamicAudioTextDataset(
             data=train_data,
             base_dir=config.datasets.train[0].base_dir,
@@ -139,7 +140,10 @@ def build_dataloaders(config):
             class_num=config.data.num_classes,
             target_sr=config.data.target_sr,
         )
-    elif config.model.model_type.lower() == "dynamic_audio_text_speakeremb" or config.model.model_type.lower() == "dynamic_audio_text_speakeremb_melspec":
+    elif config.model.model_type.lower() == "dynamic_audio_text_speakeremb" \
+        or config.model.model_type.lower() == "dynamic_audio_text_speakeremb_melspec" \
+        or config.model.model_type.lower() == "xeus_text_speakeremb" \
+        or config.model.model_type.lower() == "xeus_text_speakeremb_melspec":
         train_dataset = DynamicAudioTextSpeakerEmbDataset(
             data=train_data,
             base_dir=config.datasets.train[0].base_dir,
@@ -163,6 +167,9 @@ def build_dataloaders(config):
             use_rir=config.data.use_rir,
             rir_dir=config.data.rir_dir,
             rir_p=config.data.rir_p,
+            # text augmentation parameters
+            use_text_augmentation=config.data.use_text_augmentation,
+            text_augmentation_p=config.data.text_augmentation_p,
         )
 
         val_dataset = DynamicAudioTextSpeakerEmbDataset(

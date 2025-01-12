@@ -36,7 +36,9 @@ from utils.dataloader import (
     DynamicAudioTextSpeakerEmbCollate,
     XEUSNestCollate,
     EmbeddingCollate,
-    LastLayerEmbeddingCollate
+    LastLayerEmbeddingCollate,
+    XEUSNestTextCollate,
+    XEUSNestTextSpeakerEmbCollate
 )
 
 
@@ -102,7 +104,8 @@ def build_dataloaders(
                 target_sr=config.data.target_sr,
                 processor=processor,
             )
-    elif config.model.model_type.lower() == "dynamic_audio_text":
+    elif config.model.model_type.lower() == "dynamic_audio_text" \
+        or config.model.model_type.lower() == "xeus_text":
         test_dataset = DynamicAudioTextDataset(
             data=test_data,
             filename_column=config.datasets.train[0].filename_column,
@@ -114,14 +117,22 @@ def build_dataloaders(
             class_num=config.data.num_classes,
             target_sr=config.data.target_sr,
         )
-        processor = AutoFeatureExtractor.from_pretrained(config.model.audio_model_name)
         text_tokenizer = AutoTokenizer.from_pretrained(config.model.text_model_name)
-        collate_fn = DynamicAudioTextCollate(
-            target_sr=config.data.target_sr,
-            processor=processor,
-            text_tokenizer=text_tokenizer,
-        )
-    elif config.model.model_type.lower() == "dynamic_audio_text_speakeremb":
+        if config.model.model_type.lower() == "dynamic_audio_text":
+            processor = AutoFeatureExtractor.from_pretrained(config.model.audio_model_name)
+            collate_fn = DynamicAudioTextCollate(
+                target_sr=config.data.target_sr,
+                processor=processor,
+                text_tokenizer=text_tokenizer,
+            )
+        elif config.model.model_type.lower() == "xeus_text":
+            collate_fn = XEUSNestTextCollate(
+                text_tokenizer=text_tokenizer,
+            )
+    elif config.model.model_type.lower() == "dynamic_audio_text_speakeremb" \
+        or config.model.model_type.lower() == "dynamic_audio_text_speakeremb_melspec" \
+            or config.model.model_type.lower() == "xeus_text_speakeremb" \
+                or config.model.model_type.lower() == "xeus_text_speakeremb_melspec":
         test_dataset = DynamicAudioTextSpeakerEmbDataset(
             data=test_data,
             filename_column=config.datasets.train[0].filename_column,
@@ -134,13 +145,21 @@ def build_dataloaders(
             class_num=config.data.num_classes,
             target_sr=config.data.target_sr,
         )
-        processor = AutoFeatureExtractor.from_pretrained(config.model.audio_model_name)
         text_tokenizer = AutoTokenizer.from_pretrained(config.model.text_model_name)
-        collate_fn = DynamicAudioTextSpeakerEmbCollate(
-            target_sr=config.data.target_sr,
-            processor=processor,
-            text_tokenizer=text_tokenizer,
-        )
+
+        if config.model.model_type.lower() == "dynamic_audio_text_speakeremb" \
+            or config.model.model_type.lower() == "dynamic_audio_text_speakeremb_melspec":
+                processor = AutoFeatureExtractor.from_pretrained(config.model.audio_model_name)
+                collate_fn = DynamicAudioTextSpeakerEmbCollate(
+                    target_sr=config.data.target_sr,
+                    processor=processor,
+                    text_tokenizer=text_tokenizer,
+                )
+        elif config.model.model_type.lower() == "xeus_text_speakeremb" \
+            or config.model.model_type.lower() == "xeus_text_speakeremb_melspec":
+                collate_fn = XEUSNestTextSpeakerEmbCollate(
+                    text_tokenizer=text_tokenizer,
+                )
 
 
     test_dataloader = DataLoader(
@@ -189,7 +208,11 @@ def evaluate_model(
         if isinstance(inputs, torch.Tensor):
             inputs = inputs.to(device)
         if isinstance(inputs, list) or isinstance(inputs, tuple):
-            inputs = [i.to(device) for i in inputs]
+            # Check aimed for XEUS and NEST models
+            if isinstance(inputs[0], dict):
+                inputs = [{k: v.to(device) for k, v in i.items()} for i in inputs]
+            else:
+                inputs = [i.to(device) for i in inputs]
         else:
             inputs = {k: v.to(device) for k, v in inputs.items()}
 

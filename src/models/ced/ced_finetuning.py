@@ -24,8 +24,8 @@ class FineTuneCED(nn.Module):
     ):
         super().__init__()
 
-        # self.backbone = ced_small(pretrained=pretrained)
-        self.backbone = ced_base(pretrained=pretrained)
+        self.backbone = ced_small(pretrained=pretrained)
+        # self.backbone = ced_base(pretrained=pretrained)
 
         if freeze_backbone_flag:
             self.freeze_backbone()
