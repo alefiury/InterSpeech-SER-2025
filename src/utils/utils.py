@@ -7,6 +7,9 @@ from utils.dataloader import (
     DynamicAudioTextSpeakerEmbDataset,
     EmbeddingDataset,
     LastLayerEmbeddingDataset,
+    LastLayerEmbeddingTextDataset,
+    LastLayerEmbeddingTextSpeakerEmbDataset,
+    LastLayerEmbeddingTextSpeakerEmbMelSpecDataset,
 )
 
 
@@ -176,6 +179,90 @@ def build_dataloaders(config):
             data_type="val",
             class_num=config.data.num_classes,
             target_sr=config.data.target_sr,
+        )
+    elif config.model.model_type.lower() == "last_layer_embedding_text":
+        train_dataset = LastLayerEmbeddingTextDataset(
+            data=train_data,
+            filename_column=config.datasets.train[0].filename_column,
+            target_column="target",
+            transcript_column=config.datasets.train[0].transcript_column,
+            base_dir=config.datasets.train[0].base_dir,
+            data_type="train",
+            # text augmentation parameters
+            use_text_augmentation=config.data.use_text_augmentation,
+            text_augmentation_p=config.data.text_augmentation_p,
+        )
+
+        val_dataset = LastLayerEmbeddingTextDataset(
+            data=val_data,
+            filename_column=config.datasets.train[0].filename_column,
+            target_column="target",
+            transcript_column=config.datasets.train[0].transcript_column,
+            base_dir=config.datasets.train[0].base_dir,
+            data_type="val",
+        )
+    elif config.model.model_type.lower() == "last_layer_embedding_text_speakeremb":
+        train_dataset = LastLayerEmbeddingTextSpeakerEmbDataset(
+            data=train_data,
+            filename_column=config.datasets.train[0].filename_column,
+            target_column="target",
+            transcript_column=config.datasets.train[0].transcript_column,
+            speakeremb_base_dir=config.datasets.train[0].speakeremb_base_dir,
+            base_dir=config.datasets.train[0].base_dir,
+            data_type="train",
+            # text augmentation parameters
+            use_text_augmentation=config.data.use_text_augmentation,
+            text_augmentation_p=config.data.text_augmentation_p,
+        )
+
+        val_dataset = LastLayerEmbeddingTextSpeakerEmbDataset(
+            data=val_data,
+            filename_column=config.datasets.train[0].filename_column,
+            target_column="target",
+            transcript_column=config.datasets.train[0].transcript_column,
+            speakeremb_base_dir=config.datasets.train[0].speakeremb_base_dir,
+            base_dir=config.datasets.train[0].base_dir,
+            data_type="val",
+        )
+    elif config.model.model_type.lower() == "last_layer_embedding_text_speakeremb_melspec":
+        train_dataset = LastLayerEmbeddingTextSpeakerEmbMelSpecDataset(
+            data=train_data,
+            target_sr=config.data.target_sr,
+            filename_column=config.datasets.train[0].filename_column,
+            target_column="target",
+            transcript_column=config.datasets.train[0].transcript_column,
+            audio_base_dir=config.datasets.train[0].audio_base_dir,
+            speakeremb_base_dir=config.datasets.train[0].speakeremb_base_dir,
+            base_dir=config.datasets.train[0].base_dir,
+            data_type="train",
+            # text augmentation parameters
+            use_text_augmentation=config.data.use_text_augmentation,
+            text_augmentation_p=config.data.text_augmentation_p,
+            # Random truncation parameters
+            use_rand_truncation=config.data.use_rand_truncation,
+            min_duration=config.data.min_duration,
+            # background noise parameters
+            use_background_noise=config.data.use_background_noise,
+            background_noise_dir=config.data.background_noise_dir,
+            background_noise_min_snr_in_db=config.data.background_noise_min_snr_in_db,
+            background_noise_max_snr_in_db=config.data.background_noise_max_snr_in_db,
+            background_noise_p=config.data.background_noise_p,
+            # impulse response parameters
+            use_rir=config.data.use_rir,
+            rir_dir=config.data.rir_dir,
+            rir_p=config.data.rir_p,
+        )
+
+        val_dataset = LastLayerEmbeddingTextSpeakerEmbMelSpecDataset(
+            data=val_data,
+            target_sr=config.data.target_sr,
+            filename_column=config.datasets.train[0].filename_column,
+            target_column="target",
+            transcript_column=config.datasets.train[0].transcript_column,
+            audio_base_dir=config.datasets.train[0].audio_base_dir,
+            speakeremb_base_dir=config.datasets.train[0].speakeremb_base_dir,
+            base_dir=config.datasets.train[0].base_dir,
+            data_type="val",
         )
 
     return train_dataset, val_dataset

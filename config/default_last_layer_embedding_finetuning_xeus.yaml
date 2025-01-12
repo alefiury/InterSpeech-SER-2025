@@ -1,4 +1,4 @@
-title: SER-LastLayer-Embedding-FineTuning-WavLM_Large-(Loss-${loss.name})-(BS-${data.use_balanced_sampling})-(BS-Scheduler-${data.use_balanced_sampling_scheduler})-(BS-Scheduler-Direction-${data.class_weight_direction})-(BS-Scheduler-Degree-${data.class_weight_ratio_degree})-(PoolStrategy-${model.pooling_strategy})-(Loss-${loss.name}-${loss.use_weighted_loss})-(epochs-${trainer.max_epochs})-(bs-${train.batch_size})-(LR-${optimizer.params.learning_rate})-(PS${model.pooling_strategy})
+title: SER-LastLayer-Embedding-FineTuning-XEUS-(Loss-${loss.name})-(BS-${data.use_balanced_sampling})-(BS-Scheduler-${data.use_balanced_sampling_scheduler})-(BS-Scheduler-Direction-${data.class_weight_direction})-(BS-Scheduler-Degree-${data.class_weight_ratio_degree})-(PoolStrategy-${model.pooling_strategy})-(Loss-${loss.name}-${loss.use_weighted_loss})-(epochs-${trainer.max_epochs})-(bs-${train.batch_size})-(LR-${optimizer.params.learning_rate})-(PS${model.pooling_strategy})
 
 wandb_entity: alefiury
 
@@ -12,14 +12,14 @@ datasets:
     train:
         - name: Train
           metadata_path: "/raid/alefiury/SER/InterSpeech2025/challenge_dataset/metadatas/xeus/train_set.csv"
-          base_dir: "/raid/alefiury/SER/InterSpeech2025/challenge_dataset/wavlm-large"
+          base_dir: "/raid/alefiury/SER/InterSpeech2025/challenge_dataset/Audio_XEUS"
           filename_column: "FileName"
           target_column: "EmoClass"
 
     val:
         - name: Validation
           metadata_path: "/raid/alefiury/SER/InterSpeech2025/challenge_dataset/metadatas/xeus/validation_set.csv"
-          base_dir: "/raid/alefiury/SER/InterSpeech2025/challenge_dataset/wavlm-large"
+          base_dir: "/raid/alefiury/SER/InterSpeech2025/challenge_dataset/Audio_XEUS"
           filename_column: "FileName"
           target_column: "EmoClass"
 

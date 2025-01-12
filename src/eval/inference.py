@@ -28,6 +28,9 @@ from utils.dataloader import (
     DynamicAudioTextSpeakerEmbDataset,
     EmbeddingDataset,
     LastLayerEmbeddingDataset,
+    LastLayerEmbeddingTextDataset,
+    LastLayerEmbeddingTextSpeakerEmbDataset,
+    LastLayerEmbeddingTextSpeakerEmbMelSpecDataset
 )
 
 from utils.dataloader import (
@@ -36,7 +39,10 @@ from utils.dataloader import (
     DynamicAudioTextSpeakerEmbCollate,
     XEUSNestCollate,
     EmbeddingCollate,
-    LastLayerEmbeddingCollate
+    LastLayerEmbeddingCollate,
+    LastLayerEmbeddingTextCollate,
+    LastLayerEmbeddingTextSpeakerEmbCollate,
+    LastLayerEmbeddingTextSpeakerEmbMelSpecCollate
 )
 
 
@@ -141,7 +147,43 @@ def build_dataloaders(
             processor=processor,
             text_tokenizer=text_tokenizer,
         )
-
+    elif config.model.model_type.lower() == "last_layer_embedding_text":
+        test_dataset = LastLayerEmbeddingTextDataset(
+            data=test_data,
+            filename_column=config.datasets.train[0].filename_column,
+            target_column="target",
+            transcript_column=config.datasets.train[0].transcript_column,
+            base_dir=config.datasets.train[0].base_dir,
+            data_type="test",
+        )
+        text_tokenizer = AutoTokenizer.from_pretrained(config.model.text_model_name)
+        collate_fn = LastLayerEmbeddingTextCollate(text_tokenizer=text_tokenizer)
+    elif config.model.model_type.lower() == "last_layer_embedding_text_speakeremb":
+        test_dataset = LastLayerEmbeddingTextSpeakerEmbDataset(
+            data=test_data,
+            filename_column=config.datasets.train[0].filename_column,
+            target_column="target",
+            transcript_column=config.datasets.train[0].transcript_column,
+            speakeremb_base_dir=config.datasets.train[0].speakeremb_base_dir,
+            base_dir=config.datasets.train[0].base_dir,
+            data_type="test",
+        )
+        text_tokenizer = AutoTokenizer.from_pretrained(config.model.text_model_name)
+        collate_fn = LastLayerEmbeddingTextSpeakerEmbCollate(text_tokenizer=text_tokenizer)
+    elif config.model.model_type.lower() == "last_layer_embedding_text_speakeremb_melspec":
+        test_dataset = LastLayerEmbeddingTextSpeakerEmbMelSpecDataset(
+            data=test_data,
+            target_sr=config.data.target_sr,
+            filename_column=config.datasets.train[0].filename_column,
+            target_column="target",
+            transcript_column=config.datasets.train[0].transcript_column,
+            audio_base_dir=config.datasets.train[0].audio_base_dir,
+            speakeremb_base_dir=config.datasets.train[0].speakeremb_base_dir,
+            base_dir=config.datasets.train[0].base_dir,
+            data_type="test",
+        )
+        text_tokenizer = AutoTokenizer.from_pretrained(config.model.text_model_name)
+        collate_fn = LastLayerEmbeddingTextSpeakerEmbMelSpecCollate(text_tokenizer=text_tokenizer)
 
     test_dataloader = DataLoader(
         test_dataset,
@@ -188,7 +230,7 @@ def evaluate_model(
 
         if isinstance(inputs, torch.Tensor):
             inputs = inputs.to(device)
-        if isinstance(inputs, list) or isinstance(inputs, tuple):
+        elif isinstance(inputs, list) or isinstance(inputs, tuple):
             inputs = [i.to(device) for i in inputs]
         else:
             inputs = {k: v.to(device) for k, v in inputs.items()}

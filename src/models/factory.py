@@ -7,7 +7,10 @@ from models.modules import (
     SERDynamicAudioTextModelSpeakerEmb,
     SERDynamicAudioTextModelSpeakerEmbMelSpec,
     XEUSModel,
-    NESTModel
+    NESTModel,
+    SERLastLayerEmbeddingTextModel,
+    SERLastLayerEmbeddingTextSpeakerEmbModel,
+    SERLastLayerEmbeddingTextSpeakerEmbMelSpecModel
 )
 
 
@@ -36,5 +39,11 @@ def create_ser_model(
         return XEUSModel(**kwargs)
     elif model_type.lower() == "nest":
         return NESTModel(**kwargs)
+    elif model_type.lower() == "last_layer_embedding_text":
+        return SERLastLayerEmbeddingTextModel(**kwargs)
+    elif model_type.lower() == "last_layer_embedding_text_speakeremb":
+        return SERLastLayerEmbeddingTextSpeakerEmbModel(**kwargs)
+    elif model_type.lower() == "last_layer_embedding_text_speakeremb_melspec":
+        return SERLastLayerEmbeddingTextSpeakerEmbMelSpecModel(**kwargs)
     else:
         raise ValueError(f"Unknown model_type: {model_type}. Must be 'dynamic', 'dynamic_audio_text', 'dynamic_audio_text_speakeremb', 'embedding', 'last_layer_embedding', 'xeus' or 'nest'.")

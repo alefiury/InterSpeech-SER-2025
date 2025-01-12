@@ -27,7 +27,10 @@ from utils.dataloader import (
     DynamicAudioTextSpeakerEmbCollate,
     XEUSNestCollate,
     EmbeddingCollate,
-    LastLayerEmbeddingCollate
+    LastLayerEmbeddingCollate,
+    LastLayerEmbeddingTextCollate,
+    LastLayerEmbeddingTextSpeakerEmbCollate,
+    LastLayerEmbeddingTextSpeakerEmbMelSpecCollate
 )
 
 
@@ -90,18 +93,37 @@ class PLWrapper(pl.LightningModule):
                 else:
                     raise ValueError(f"Invalid loss: {self.config.loss.name}")
 
-    def compute_class_weights_for_epoch(self, epoch):
+    def N_power_ratio(self, ratio: float, n: int):
+        """Compute the N-th power of a ratio.
+        n = 1: linear
+        n > 1: polynomial
+        """
+        print(f"Computing {n}-th power of {ratio} | Result: {ratio**n}")
+        return ratio**n
+
+    def compute_class_weights_for_epoch(self, epoch: int = None, direction: str = 'to_uniform', ratio_degree: int = 1):
         """
         Compute the class weights for the current epoch.
         This function linearly interpolates between the original weights and a uniform distribution.
+
+        Args:
         """
         original_weights = get_classes_weights(self.config)
 
         r = float(epoch) / float(self.trainer.max_epochs)
+
+        r_transformed = self.N_power_ratio(r, ratio_degree)
+
         new_weights = []
-        for w in original_weights:
-            new_w = (1.0 - r) * w + r * 1.0
-            new_weights.append(new_w)
+
+        if direction == 'to_uniform':
+            for w in original_weights:
+                new_w = (1.0 - r) * w + r * 1.0
+                new_weights.append(new_w)
+        elif direction == 'to_distribution':
+            for w in original_weights:
+                new_w = (1.0 - r) * 1.0 + r * w
+                new_weights.append(new_w)
         return torch.tensor(new_weights, dtype=torch.float)
 
     def train_dataloader(self):
@@ -135,6 +157,15 @@ class PLWrapper(pl.LightningModule):
             collate_fn = EmbeddingCollate()
         elif self.config.model.model_type.lower() == "last_layer_embedding":
             collate_fn = LastLayerEmbeddingCollate()
+        elif self.config.model.model_type.lower() == "last_layer_embedding_text":
+            text_tokenizer = AutoTokenizer.from_pretrained(self.config.model.text_model_name)
+            collate_fn = LastLayerEmbeddingTextCollate(text_tokenizer=text_tokenizer)
+        elif self.config.model.model_type.lower() == "last_layer_embedding_text_speakeremb":
+            text_tokenizer = AutoTokenizer.from_pretrained(self.config.model.text_model_name)
+            collate_fn = LastLayerEmbeddingTextSpeakerEmbCollate(text_tokenizer=text_tokenizer)
+        elif self.config.model.model_type.lower() == "last_layer_embedding_text_speakeremb_melspec":
+            text_tokenizer = AutoTokenizer.from_pretrained(self.config.model.text_model_name)
+            collate_fn = LastLayerEmbeddingTextSpeakerEmbMelSpecCollate(text_tokenizer=text_tokenizer)
         else:
             raise ValueError(f"Invalid model type: {self.config.model.model_type}")
 
@@ -144,8 +175,14 @@ class PLWrapper(pl.LightningModule):
             print("Using Balanced Sampling!")
             # Compute sample weights
             if self.config.data.get("use_balanced_sampling_scheduler", False):
+                print("Using Balanced Sampling Scheduler!")
+                print("Balanced Sampling direction: ", self.config.data.get("class_weight_direction", "to_uniform"))
                 # Compute the class weights for the current epoch
-                class_weights = self.compute_class_weights_for_epoch(self.current_epoch)
+                class_weights = self.compute_class_weights_for_epoch(
+                    self.current_epoch,
+                    direction=self.config.data.get("class_weight_direction", "to_uniform"),
+                    ratio_degree=self.config.data.get("class_weight_ratio_degree", 1)
+                )
                 print(f"Class weights: {class_weights}")
             else:
                 class_weights = get_classes_weights(self.config)
@@ -207,6 +244,15 @@ class PLWrapper(pl.LightningModule):
             collate_fn = EmbeddingCollate()
         elif self.config.model.model_type.lower() == "last_layer_embedding":
             collate_fn = LastLayerEmbeddingCollate()
+        elif self.config.model.model_type.lower() == "last_layer_embedding_text":
+            text_tokenizer = AutoTokenizer.from_pretrained(self.config.model.text_model_name)
+            collate_fn = LastLayerEmbeddingTextCollate(text_tokenizer=text_tokenizer)
+        elif self.config.model.model_type.lower() == "last_layer_embedding_text_speakeremb":
+            text_tokenizer = AutoTokenizer.from_pretrained(self.config.model.text_model_name)
+            collate_fn = LastLayerEmbeddingTextSpeakerEmbCollate(text_tokenizer=text_tokenizer)
+        elif self.config.model.model_type.lower() == "last_layer_embedding_text_speakeremb_melspec":
+            text_tokenizer = AutoTokenizer.from_pretrained(self.config.model.text_model_name)
+            collate_fn = LastLayerEmbeddingTextSpeakerEmbMelSpecCollate(text_tokenizer=text_tokenizer)
         else:
             raise ValueError(f"Invalid model type: {self.config.model.model_type}")
         return torch.utils.data.DataLoader(
@@ -390,7 +436,11 @@ class PLWrapper(pl.LightningModule):
             plt.close(fig)
 
         if self.config.data.get("use_balanced_sampling_scheduler", False):
-            class_weights = self.compute_class_weights_for_epoch(self.current_epoch)
+            class_weights = self.compute_class_weights_for_epoch(
+                self.current_epoch,
+                direction=self.config.data.get("class_weight_direction", "to_uniform"),
+                ratio_degree=self.config.data.get("class_weight_ratio_degree", 1)
+            )
             fig = self._plot_class_weights(class_weights)
             self.logger.log_image(
                 "val/class_weights",
