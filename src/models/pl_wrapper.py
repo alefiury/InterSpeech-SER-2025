@@ -11,6 +11,7 @@ from lightning.pytorch.utilities import grad_norm
 from torch.utils.data import WeightedRandomSampler
 from transformers import AutoTokenizer, AutoFeatureExtractor
 from torchmetrics import Accuracy, Precision, Recall, F1Score, MetricCollection, ConfusionMatrix
+from sklearn.metrics import accuracy_score, f1_score, recall_score, precision_score, confusion_matrix
 
 # backward compatibility
 try:
@@ -30,12 +31,13 @@ from utils.dataloader import (
     LastLayerEmbeddingCollate,
     LastLayerEmbeddingTextCollate,
     LastLayerEmbeddingTextSpeakerEmbCollate,
-    LastLayerEmbeddingTextSpeakerEmbMelSpecCollate
+    LastLayerEmbeddingTextSpeakerEmbMelSpecCollate,
+    LastLayerEmbeddingTextMelSpecCollate
 )
 
 
 class PLWrapper(pl.LightningModule):
-    def __init__(self, config: DictConfig):
+    def __init__(self, config: DictConfig, inference_mode: bool = False):
         super().__init__()
         self.save_hyperparameters(config)
 
@@ -46,17 +48,44 @@ class PLWrapper(pl.LightningModule):
         )
 
         n_classes = config.data.num_classes
-        base_metrics = MetricCollection({
-            "accuracy": Accuracy(task="multiclass", num_classes=n_classes),
-            "precision": Precision(task="multiclass", average="macro", num_classes=n_classes),
-            "recall": Recall(task="multiclass", average="macro", num_classes=n_classes),
-            "f1-score": F1Score(task="multiclass", average="macro", num_classes=n_classes),
-        })
+        # base_metrics = MetricCollection({
+        #     "accuracy": Accuracy(task="multiclass", num_classes=n_classes),
+        #     "precision": Precision(task="multiclass", average="macro", num_classes=n_classes),
+        #     "recall": Recall(task="multiclass", average="macro", num_classes=n_classes),
+        #     "f1-score": F1Score(task="multiclass", average="macro", num_classes=n_classes),
+        # })
 
-        self.train_metrics = base_metrics.clone(prefix='train/')
-        self.val_metrics = base_metrics.clone(prefix='val/')
+        # self.train_metrics = base_metrics.clone(prefix='train/')
+        # self.val_metrics = base_metrics.clone(prefix='val/')
 
-        self.confusion_matrix = ConfusionMatrix(task="multiclass", num_classes=n_classes)
+        # self.confusion_matrix = ConfusionMatrix(task="multiclass", num_classes=n_classes)
+
+        self.train_preds = []
+        self.train_targets = []
+
+        self.val_preds = []
+        self.val_targets = []
+
+        # Used only when we have to load the weights and the criterion has weights (weight parameter being used)
+        # because the weights are saved in the checkpoint and we need to load them,
+        # otherwise the criterion is created only in "fit" mode and not created inside "init", raising an error
+        # this is only a lazy way to avoid this error
+        if inference_mode:
+            if self.config.loss.get("use_weighted_loss", False):
+                weights = get_classes_weights(self.config).to(self.device)
+            else:
+                weights = None
+            if self.config.loss.get("name", "ce").lower() == "ce":
+                self.criterion = torch.nn.CrossEntropyLoss(
+                    weight=weights
+                )
+            elif self.config.loss.get("name", "ce").lower() == "focal":
+                self.criterion = FocalLoss(
+                    alpha=self.config.loss.get("alpha", 0.5),
+                    gamma=self.config.loss.get("gamma", 2.0),
+                    reduction="mean",
+                    weight=weights
+                )
 
     def setup(self, stage: str):
         # Assign train/val datasets for use in dataloaders
@@ -166,6 +195,9 @@ class PLWrapper(pl.LightningModule):
         elif self.config.model.model_type.lower() == "last_layer_embedding_text_speakeremb_melspec":
             text_tokenizer = AutoTokenizer.from_pretrained(self.config.model.text_model_name)
             collate_fn = LastLayerEmbeddingTextSpeakerEmbMelSpecCollate(text_tokenizer=text_tokenizer)
+        elif self.config.model.model_type.lower() == "last_layer_embedding_text_melspec":
+            text_tokenizer = AutoTokenizer.from_pretrained(self.config.model.text_model_name)
+            collate_fn = LastLayerEmbeddingTextMelSpecCollate(text_tokenizer=text_tokenizer)
         else:
             raise ValueError(f"Invalid model type: {self.config.model.model_type}")
 
@@ -253,11 +285,14 @@ class PLWrapper(pl.LightningModule):
         elif self.config.model.model_type.lower() == "last_layer_embedding_text_speakeremb_melspec":
             text_tokenizer = AutoTokenizer.from_pretrained(self.config.model.text_model_name)
             collate_fn = LastLayerEmbeddingTextSpeakerEmbMelSpecCollate(text_tokenizer=text_tokenizer)
+        elif self.config.model.model_type.lower() == "last_layer_embedding_text_melspec":
+            text_tokenizer = AutoTokenizer.from_pretrained(self.config.model.text_model_name)
+            collate_fn = LastLayerEmbeddingTextMelSpecCollate(text_tokenizer=text_tokenizer)
         else:
             raise ValueError(f"Invalid model type: {self.config.model.model_type}")
         return torch.utils.data.DataLoader(
             self.val_dataset,
-            batch_size=self.config.train.batch_size,
+            batch_size=1,
             shuffle=False,
             num_workers=self.config.train.num_workers,
             pin_memory=True,
@@ -375,10 +410,16 @@ class PLWrapper(pl.LightningModule):
         if self.config.data.get("mixup_alpha", 0.0) > 0.0:
             targets = torch.argmax(targets, dim=1)
 
+        # Get predictions
+        preds = torch.argmax(logits, dim=1)
+        # Store predictions and targets
+        self.train_preds.append(preds.cpu().numpy())
+        self.train_targets.append(targets.cpu().numpy())
+
         # Update and log training metrics
-        metrics = self.train_metrics(logits, targets)
+        # metrics = self.train_metrics(logits, targets)
         # Log metrics
-        self.log_dict(metrics, on_step=True, on_epoch=True, prog_bar=True, logger=True)
+        # self.log_dict(metrics, on_step=True, on_epoch=True, prog_bar=True, logger=True)
         # Log training loss
         self.log("train/loss", loss, on_step=True, on_epoch=True, prog_bar=True, logger=True)
 
@@ -392,34 +433,100 @@ class PLWrapper(pl.LightningModule):
         loss = self.criterion(logits, targets)
 
         # Update and log validation metrics
-        metrics = self.val_metrics(logits, targets)
+        # metrics = self.val_metrics(logits, targets)
 
         if self.config.data.get("mixup_alpha", 0.0) > 0.0:
             targets = torch.argmax(targets, dim=1)
 
+        # Get predictions
+        preds = torch.argmax(logits, dim=1)
+        # Store predictions and targets
+        self.val_preds.append(preds.cpu().numpy())
+        self.val_targets.append(targets.cpu().numpy())
+
         # Log metrics
-        self.log_dict(metrics, on_step=True, on_epoch=True, prog_bar=True, logger=True)
+        # self.log_dict(metrics, on_step=True, on_epoch=True, prog_bar=True, logger=True)
         # Log validation loss
         self.log("val/loss", loss, on_step=True, on_epoch=True, prog_bar=True, logger=True)
         # Log confusion matrix
-        preds = torch.argmax(logits, dim=1)
-        self.confusion_matrix(preds, targets)
+        # preds = torch.argmax(logits, dim=1)
+        # self.confusion_matrix(preds, targets)
 
         return loss
 
+    def on_train_epoch_end(self):
+        """Called at the end of the training epoch."""
+        if self.train_preds and self.train_targets:
+            # Concatenate all predictions and targets
+            all_preds = np.concatenate(self.train_preds)
+            all_targets = np.concatenate(self.train_targets)
+
+            # Compute metrics using sklearn
+            train_accuracy = accuracy_score(all_targets, all_preds)
+            train_precision = precision_score(all_targets, all_preds, average='macro', zero_division=0)
+            train_recall = recall_score(all_targets, all_preds, average='macro', zero_division=0)
+            train_f1 = f1_score(all_targets, all_preds, average='macro', zero_division=0)
+
+            # Log the metrics
+            self.log("train/accuracy", train_accuracy, prog_bar=True, logger=True)
+            self.log("train/precision", train_precision, prog_bar=True, logger=True)
+            self.log("train/recall", train_recall, prog_bar=True, logger=True)
+            self.log("train/f1-score", train_f1, prog_bar=True, logger=True)
+
+            cm = confusion_matrix(all_targets, all_preds)
+            fig = self._plot_confusion_matrix(cm)
+            self.logger.log_image(
+                "train/confusion_matrix",
+                [wandb.Image(fig, caption="Confusion Matrix")],
+                self.current_epoch
+            )
+            plt.close(fig)
+
+            # Reset the lists for the next epoch
+            self.train_preds = []
+            self.train_targets = []
+
     def on_validation_epoch_end(self):
+        # Compute metrics using sklearn
+        if self.val_preds and self.val_targets:
+            all_preds = np.concatenate(self.val_preds)
+            all_targets = np.concatenate(self.val_targets)
+
+            val_accuracy = accuracy_score(all_targets, all_preds)
+            val_precision = precision_score(all_targets, all_preds, average='macro', zero_division=0)
+            val_recall = recall_score(all_targets, all_preds, average='macro', zero_division=0)
+            val_f1 = f1_score(all_targets, all_preds, average='macro', zero_division=0)
+
+            # Log the metrics
+            self.log("val/accuracy", val_accuracy, prog_bar=True, logger=True)
+            self.log("val/precision", val_precision, prog_bar=True, logger=True)
+            self.log("val/recall", val_recall, prog_bar=True, logger=True)
+            self.log("val/f1-score", val_f1, prog_bar=True, logger=True)
+
+            cm = confusion_matrix(all_targets, all_preds)
+            fig = self._plot_confusion_matrix(cm)
+            self.logger.log_image(
+                "val/confusion_matrix",
+                [wandb.Image(fig, caption="Confusion Matrix")],
+                self.current_epoch
+            )
+            plt.close(fig)
+
+            # Reset the lists for the next epoch
+            self.val_preds = []
+            self.val_targets = []
         # Compute the confusion matrix
-        cm = self.confusion_matrix.compute().cpu().numpy()
-        # Reset confusion matrix for the next epoch
-        self.confusion_matrix.reset()
-        # Log confusion matrix as a figure
-        fig = self._plot_confusion_matrix(cm)
-        self.logger.log_image(
-            "val/confusion_matrix",
-            [wandb.Image(fig, caption="Confusion Matrix")],
-            self.current_epoch
-        )
-        plt.close(fig)
+        # cm = self.confusion_matrix.compute().cpu().numpy()
+        # # Reset confusion matrix for the next epoch
+        # self.confusion_matrix.reset()
+        # # Log confusion matrix as a figure
+        # fig = self._plot_confusion_matrix(cm)
+        # self.logger.log_image(
+        #     "val/confusion_matrix",
+        #     [wandb.Image(fig, caption="Confusion Matrix")],
+        #     self.current_epoch
+        # )
+        # plt.close(fig)
 
         if self.config.model.get("layer_weight_strategy", "per_layer") == "weighted_sum" or \
             self.config.model.get("layer_weight_strategy", "per_layer") == "weighted_sum_2":

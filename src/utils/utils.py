@@ -10,6 +10,7 @@ from utils.dataloader import (
     LastLayerEmbeddingTextDataset,
     LastLayerEmbeddingTextSpeakerEmbDataset,
     LastLayerEmbeddingTextSpeakerEmbMelSpecDataset,
+    LastLayerEmbeddingTextMelSpecDataset,
 )
 
 
@@ -181,11 +182,19 @@ def build_dataloaders(config):
             target_sr=config.data.target_sr,
         )
     elif config.model.model_type.lower() == "last_layer_embedding_text":
+        train_data["gender_id"] = train_data[config.datasets.train[0].gender_column].map(
+            config.data.gender2id
+        )
+        val_data["gender_id"] = val_data[config.datasets.val[0].gender_column].map(
+            config.data.gender2id
+        )
+
         train_dataset = LastLayerEmbeddingTextDataset(
             data=train_data,
             filename_column=config.datasets.train[0].filename_column,
             target_column="target",
             transcript_column=config.datasets.train[0].transcript_column,
+            gender_column="gender_id",
             base_dir=config.datasets.train[0].base_dir,
             data_type="train",
             # text augmentation parameters
@@ -198,6 +207,7 @@ def build_dataloaders(config):
             filename_column=config.datasets.train[0].filename_column,
             target_column="target",
             transcript_column=config.datasets.train[0].transcript_column,
+            gender_column="gender_id",
             base_dir=config.datasets.train[0].base_dir,
             data_type="val",
         )
@@ -261,6 +271,52 @@ def build_dataloaders(config):
             transcript_column=config.datasets.train[0].transcript_column,
             audio_base_dir=config.datasets.train[0].audio_base_dir,
             speakeremb_base_dir=config.datasets.train[0].speakeremb_base_dir,
+            base_dir=config.datasets.train[0].base_dir,
+            data_type="val",
+        )
+    elif config.model.model_type.lower() == "last_layer_embedding_text_melspec":
+        train_data["gender_id"] = train_data[config.datasets.train[0].gender_column].map(
+            config.data.gender2id
+        )
+        val_data["gender_id"] = val_data[config.datasets.val[0].gender_column].map(
+            config.data.gender2id
+        )
+        train_dataset = LastLayerEmbeddingTextMelSpecDataset(
+            data=train_data,
+            target_sr=config.data.target_sr,
+            filename_column=config.datasets.train[0].filename_column,
+            target_column="target",
+            transcript_column=config.datasets.train[0].transcript_column,
+            gender_column="gender_id",
+            audio_base_dir=config.datasets.train[0].audio_base_dir,
+            base_dir=config.datasets.train[0].base_dir,
+            data_type="train",
+            # text augmentation parameters
+            use_text_augmentation=config.data.use_text_augmentation,
+            text_augmentation_p=config.data.text_augmentation_p,
+            # Random truncation parameters
+            use_rand_truncation=config.data.use_rand_truncation,
+            min_duration=config.data.min_duration,
+            # background noise parameters
+            use_background_noise=config.data.use_background_noise,
+            background_noise_dir=config.data.background_noise_dir,
+            background_noise_min_snr_in_db=config.data.background_noise_min_snr_in_db,
+            background_noise_max_snr_in_db=config.data.background_noise_max_snr_in_db,
+            background_noise_p=config.data.background_noise_p,
+            # impulse response parameters
+            use_rir=config.data.use_rir,
+            rir_dir=config.data.rir_dir,
+            rir_p=config.data.rir_p,
+        )
+
+        val_dataset = LastLayerEmbeddingTextMelSpecDataset(
+            data=val_data,
+            target_sr=config.data.target_sr,
+            filename_column=config.datasets.train[0].filename_column,
+            target_column="target",
+            transcript_column=config.datasets.train[0].transcript_column,
+            gender_column="gender_id",
+            audio_base_dir=config.datasets.train[0].audio_base_dir,
             base_dir=config.datasets.train[0].base_dir,
             data_type="val",
         )

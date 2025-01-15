@@ -1,5 +1,5 @@
 #!/bin/bash
-CUDA_DEVICE=3
+CUDA_DEVICE=6
 BASE_DIR="/raid/alefiury/SER/InterSpeech2025/challenge_dataset/"
 INPUT_DIR="Audios"
 
@@ -38,20 +38,20 @@ INPUT_DIR="Audios"
 #     -m=$MODEL_NAME
 
 # TitaNet
-OUTPUT_DIR="TitaNet-large"
-CUDA_VISIBLE_DEVICES=$CUDA_DEVICE python3 extract_titanet_embeddings.py \
-    -b=$BASE_DIR \
-    -i=$INPUT_DIR \
-    -o=$OUTPUT_DIR
+# OUTPUT_DIR="TitaNet-large"
+# CUDA_VISIBLE_DEVICES=$CUDA_DEVICE python3 extract_titanet_embeddings.py \
+#     -b=$BASE_DIR \
+#     -i=$INPUT_DIR \
+#     -o=$OUTPUT_DIR
 
-# WavLM
-MODEL_NAME="wavlm-large"
-OUTPUT_DIR="wavlm-large"
-CUDA_VISIBLE_DEVICES=$CUDA_DEVICE python3 extract_wavlm_embeddings.py \
-    -b=$BASE_DIR \
-    -i=$INPUT_DIR \
-    -o=$OUTPUT_DIR \
-    -m=$MODEL_NAME
+# # WavLM
+# MODEL_NAME="wavlm-large"
+# OUTPUT_DIR="wavlm-large"
+# CUDA_VISIBLE_DEVICES=$CUDA_DEVICE python3 extract_wavlm_embeddings.py \
+#     -b=$BASE_DIR \
+#     -i=$INPUT_DIR \
+#     -o=$OUTPUT_DIR \
+#     -m=$MODEL_NAME
 
 # Whisper
 MODEL_NAME="whisper-large-v3"

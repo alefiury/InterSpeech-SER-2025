@@ -201,6 +201,10 @@ class LastLayerEmbeddingDataset(Dataset):
         Dict[torch.Tensor, np.ndarray]: A dictionary containing the audio and the caption
         """
         filename = self.filenames[index]
+
+        if filename.endswith(".wav"):
+            filename = filename[:-4] + ".pt"
+
         filepath = os.path.join(self.base_dir, filename)
 
         target = self.targets[index]
@@ -767,6 +771,7 @@ class LastLayerEmbeddingTextDataset(Dataset):
         data: pd.DataFrame,
         filename_column: str,
         target_column: str,
+        gender_column: str,
         transcript_column: str,
         base_dir: str,
         data_type: str = "val",
@@ -780,6 +785,7 @@ class LastLayerEmbeddingTextDataset(Dataset):
         # Cache filepaths and targets
         self.filenames = self.data[filename_column].values
         self.targets = self.data[target_column].values
+        self.genders = self.data[gender_column].values
 
         self.filename_column = filename_column
         self.target_column = target_column
@@ -840,7 +846,9 @@ class LastLayerEmbeddingTextDataset(Dataset):
         # Convert features to float
         features = features.float()
 
-        return features, transcript, target
+        genders = self.genders[index]
+
+        return features, transcript, genders, target
 
 
 class LastLayerEmbeddingTextCollate:
@@ -857,8 +865,9 @@ class LastLayerEmbeddingTextCollate:
         batch: List[Tuple[torch.Tensor, torch.Tensor]]
     ) -> Tuple[torch.Tensor, Optional[torch.Tensor]]:
 
-        features, transcripts, targets = zip(*batch)
+        features, transcripts, genders, targets = zip(*batch)
         targets = torch.stack([torch.as_tensor(t) for t in targets])
+        genders = torch.stack([torch.as_tensor(g) for g in genders])
 
         processed_features = []
         for feature in features:
@@ -885,7 +894,7 @@ class LastLayerEmbeddingTextCollate:
             return_tensors="pt"
         )
 
-        return (padded_features, tokenized_transcripts), targets
+        return (padded_features, tokenized_transcripts, genders), targets
 
 
 class LastLayerEmbeddingTextSpeakerEmbDataset(LastLayerEmbeddingTextDataset):
@@ -1158,3 +1167,190 @@ class LastLayerEmbeddingTextSpeakerEmbMelSpecCollate:
             padded_audios[i, :audio.shape[-1]] = audio.float()
 
         return (padded_features, tokenized_transcripts, speaker_embs, padded_audios), targets
+
+
+class LastLayerEmbeddingTextMelSpecDataset(LastLayerEmbeddingTextDataset):
+    def __init__(
+        self,
+        target_sr: int = 16000,
+        audio_base_dir: str = None,
+        # Random truncation parameters (Optional)
+        use_rand_truncation: Optional[bool] = False,
+        min_duration: Optional[float] = 0.0,
+        # background noise parameters (Optional)
+        use_background_noise: Optional[bool] = False,
+        background_noise_dir: Optional[str] = None,
+        background_noise_min_snr_in_db: Optional[float] = 3.0,
+        background_noise_max_snr_in_db: Optional[float] = 15.0,
+        background_noise_p: Optional[float] = 0.5,
+        # impulse response parameters (Optional)
+        use_rir: Optional[bool] = False,
+        rir_dir: Optional[str] = None,
+        rir_p: Optional[float] = 0.5,
+        **kwargs,
+    ):
+        super().__init__(**kwargs)
+        """Initialization"""
+        self.audio_base_dir = audio_base_dir
+        self.target_sr = target_sr
+
+        # Data augmentation parameters
+        # Random truncation
+        self.use_rand_truncation = use_rand_truncation
+        self.min_duration = min_duration
+        # Background noise
+        self.use_background_noise = use_background_noise
+        if self.use_background_noise:
+            self.background_noise = AddBackgroundNoise(
+                background_paths=background_noise_dir,
+                min_snr_in_db=background_noise_min_snr_in_db,
+                max_snr_in_db=background_noise_max_snr_in_db,
+                sample_rate=target_sr,
+                target_rate=target_sr,
+                p=background_noise_p
+            )
+        else:
+            # Identity augmentation if not using background noise
+            self.background_noise = Identity()
+
+        # Impulse response
+        self.use_rir = use_rir
+        if self.use_rir:
+            self.impulse_response = ApplyImpulseResponse(
+                ir_paths=rir_dir,
+                sample_rate=target_sr,
+                target_rate=target_sr,
+                p=rir_p,
+            )
+        else:
+            # Identity augmentation if not using impulse response
+            self.impulse_response = Identity()
+
+        # Cache for sampling rate resamplers
+        self.resamplers = {}
+
+
+    def _random_truncation(self, audio: torch.Tensor) -> torch.Tensor:
+        """
+        Cut or pad an audio tensor to the desired length.
+        """
+        min_length = int(self.min_duration * self.target_sr)
+        len_audio = audio.shape[-1]
+
+        if self.use_rand_truncation and len_audio > min_length and random.random() < 0.5:
+            segment_length = random.randint(min_length, len_audio)
+
+            max_start = len_audio - segment_length
+            start = random.randint(0, max_start)
+            end = start + segment_length
+
+            audio = audio[..., start:end]
+
+        return audio
+
+    def _load_wav(self, filepath: str):
+        waveform, source_sr = torchaudio.load(filepath)
+
+        # Convert to mono if stereo
+        if waveform.dim() == 2 and waveform.shape[0] > 1:
+            waveform = waveform.mean(dim=0, keepdim=True)
+
+        # Resample if needed
+        if source_sr != self.target_sr:
+            if source_sr not in self.resamplers:
+                self.resamplers[source_sr] = torchaudio.transforms.Resample(orig_freq=source_sr, new_freq=self.target_sr)
+            waveform = self.resamplers[source_sr](waveform)
+
+        return waveform, self.target_sr
+
+    def __getitem__(self, index: int) -> Dict[torch.Tensor, torch.Tensor]:
+        filename = self.filenames[index]
+        if filename.endswith(".wav"):
+            feature_filename = filename[:-4] + ".pt"
+        else:
+            feature_filename = filename
+        filepath = os.path.join(self.base_dir, feature_filename)
+
+        target = self.targets[index]
+        transcript = self.transcripts[index]
+
+        # Apply text augmentation
+        if self.use_text_augmentation and self.data_type == "train" and random.random() < self.text_augmentation_p:
+            transcript = self.text_augmenter.augment(transcript)[0]
+
+        features = self._load_file(filepath)
+
+        # Convert features to float
+        features = features.float()
+
+        audio, _ = self._load_wav(os.path.join(self.audio_base_dir, filename))
+        # Random Truncation
+        if self.use_rand_truncation and self.data_type == "train":
+            audio = self._random_truncation(audio)
+
+        if self.data_type == "train":
+            # Background noise insertion or Identity
+            audio = self.background_noise(audio.unsqueeze(0)).squeeze(0)
+            # Impulse response (Reverberation) or Identity
+            audio = self.impulse_response(audio.unsqueeze(0)).squeeze(0)
+
+        genders = self.genders[index]
+
+        return features, transcript, genders, audio, target
+
+
+class LastLayerEmbeddingTextMelSpecCollate:
+    def __init__(
+        self,
+        padding_value: float = 0.0,
+        text_tokenizer = None,
+    ):
+        self.text_tokenizer = text_tokenizer
+        self.padding_value = padding_value
+
+    def __call__(
+        self,
+        batch: List[Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]]
+    ) -> Tuple[torch.Tensor, Optional[torch.Tensor]]:
+
+        features, transcripts, genders, audios, targets = zip(*batch)
+        targets = torch.stack([torch.as_tensor(t) for t in targets])
+
+        genders = torch.stack([torch.as_tensor(g) for g in genders])
+
+        processed_features = []
+        for feature in features:
+            # Only check and fix shape if it's (1, T, F)
+            if feature.dim() == 3 and feature.shape[0] == 1:
+                feature = feature.squeeze(0)  # (T, F)
+            processed_features.append(feature)
+
+        features = processed_features
+        lengths = [f.shape[0] for f in features]
+        max_length = max(lengths)
+
+        feature_dim = features[0].shape[-1]
+
+        padded_features = torch.full((len(features), max_length, feature_dim), self.padding_value)
+        for i, f in enumerate(features):
+            padded_features[i, :f.shape[0]] = f
+
+        tokenized_transcripts = self.text_tokenizer(
+            transcripts,
+            padding=True,
+            truncation=True,
+            max_length=512,
+            return_tensors="pt"
+        )
+
+        # pad audios ana take the length
+        audios_lengths = [audio.shape[-1] for audio in audios]
+        # pad audios
+        max_length = max(audios_lengths)
+
+        padded_audios = torch.full((len(audios), max_length), self.padding_value)
+
+        for i, audio in enumerate(audios):
+            padded_audios[i, :audio.shape[-1]] = audio.float()
+
+        return (padded_features, tokenized_transcripts, genders, padded_audios), targets

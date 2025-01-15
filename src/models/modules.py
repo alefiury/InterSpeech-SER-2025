@@ -1126,6 +1126,9 @@ class SERLastLayerEmbeddingTextModel(nn.Module):
         text_num_feature_layers: int = 25,
         specific_text_layer_idx: int = -1,
         text_pooling_strategy: str = "mean",
+        # gender information
+        use_gender_emb: bool = False,
+        gender_embedding_dim: int = 16,
         # mlp
         mlp_input_dim: int = 768,
         mlp_hidden_dim: int = 1024,
@@ -1138,10 +1141,18 @@ class SERLastLayerEmbeddingTextModel(nn.Module):
         text_feat_dim: int = 1024,
         audio_proj_dropout: float = 0.2,
         text_proj_dropout: float = 0.2,
+        # use transformer encoder
+        use_transformer_enc: bool = False,
     ):
         super().__init__()
         text_config = AutoConfig.from_pretrained(text_model_name, output_hidden_states=True)
         self.text_backbone = AutoModel.from_pretrained(text_model_name, config=text_config)
+
+        self.gender_encoder = None
+        if use_gender_emb:
+            print("Using Gender Embedding!")
+            self.gender_encoder = nn.Embedding(num_embeddings=2, embedding_dim=gender_embedding_dim)
+            mlp_input_dim = mlp_input_dim + gender_embedding_dim
 
         self.freeze_text_backbone = freeze_text_backbone
         if freeze_text_backbone:
@@ -1175,19 +1186,39 @@ class SERLastLayerEmbeddingTextModel(nn.Module):
             # Consider that mlp_input_dim is always equal to the F dimension of the embeddings
             self.text_attpool = AttentiveStatisticsPooling(input_size=int(mlp_input_dim/2))
 
-        # Audio Projection layer
-        self.audio_proj = nn.Sequential(
-            nn.Linear(audio_feat_dim, audio_feat_dim),
-            nn.ReLU(),
-            nn.Dropout(audio_proj_dropout),
-        )
 
-        # Text Projection layer
-        self.text_proj = nn.Sequential(
-            nn.Linear(text_feat_dim, text_feat_dim),
-            nn.ReLU(),
-            nn.Dropout(text_proj_dropout),
-        )
+        self.use_transformer_enc = use_transformer_enc
+        if use_transformer_enc:
+            print("Using Transformer Encoder!")
+            self.audio_proj = nn.TransformerEncoderLayer(
+                d_model=audio_feat_dim,
+                nhead=1,
+                dim_feedforward=audio_feat_dim*4,
+                dropout=audio_proj_dropout,
+                batch_first=True
+            )
+
+            self.text_proj = nn.TransformerEncoderLayer(
+                d_model=text_feat_dim,
+                nhead=1,
+                dim_feedforward=text_feat_dim*4,
+                dropout=text_proj_dropout,
+                batch_first=True
+            )
+        else:
+            # Audio Projection layer
+            self.audio_proj = nn.Sequential(
+                nn.Linear(audio_feat_dim, audio_feat_dim),
+                nn.ReLU(),
+                nn.Dropout(audio_proj_dropout),
+            )
+
+            # Text Projection layer
+            self.text_proj = nn.Sequential(
+                nn.Linear(text_feat_dim, text_feat_dim),
+                nn.ReLU(),
+                nn.Dropout(text_proj_dropout),
+            )
 
         # MLP
         self.mlp = MLPBase(
@@ -1217,7 +1248,7 @@ class SERLastLayerEmbeddingTextModel(nn.Module):
         return all_layers
 
     def _get_embeddings(self, x: torch.Tensor) -> torch.Tensor:
-        audio_hidden_states, text = x
+        audio_hidden_states, text, genders = x
 
         if self.freeze_text_backbone:
             with torch.no_grad():
@@ -1227,7 +1258,7 @@ class SERLastLayerEmbeddingTextModel(nn.Module):
 
         text_hidden_states = self._stack_embeddings(text_outputs.hidden_states)
 
-        return audio_hidden_states, text_hidden_states
+        return audio_hidden_states, text_hidden_states, genders
 
     def _specific_layer(self, x: torch.Tensor, layer_idx: int) -> torch.Tensor:
         return x[:, layer_idx, :]  # [B,T,F]
@@ -1286,15 +1317,31 @@ class SERLastLayerEmbeddingTextModel(nn.Module):
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         # Get embeddings
-        audio_hidden_states, text_hidden_states = self._get_embeddings(x)
-        # Apply layer weighting
-        audio_embeddings, text_embeddings = self._apply_pooling(audio_hidden_states, text_hidden_states)
-        # Audio projection
-        audio_embeddings = self.audio_proj(audio_embeddings)
-        # Text projection
-        text_embeddings = self.text_proj(text_embeddings)
-        # Concatenate audio and text embeddings
-        logits_input = torch.cat((audio_embeddings, text_embeddings), dim=-1)  # [B,AF+TF]
+        audio_hidden_states, text_hidden_states, genders = self._get_embeddings(x)
+        # check if model is using transformers base pooling
+        if self.use_transformer_enc:
+            if self.text_layer_weight_strategy == "per_layer":
+                text_hidden_states = self._specific_layer(text_hidden_states, self.specific_text_layer_idx)
+
+            audio_hidden_states = self.audio_proj(audio_hidden_states)
+            text_hidden_states = self.text_proj(text_hidden_states)
+
+            audio_embeddings = audio_hidden_states.mean(dim=1)
+            text_embeddings = text_hidden_states.mean(dim=1)
+        else:
+            # Apply layer weighting
+            audio_embeddings, text_embeddings = self._apply_pooling(audio_hidden_states, text_hidden_states)
+            # Audio projection
+            audio_embeddings = self.audio_proj(audio_embeddings)
+            # Text projection
+            text_embeddings = self.text_proj(text_embeddings)
+        # Gender embedding
+        if self.gender_encoder is not None:
+            gender_emb = self.gender_encoder(genders)
+            logits_input = torch.cat((audio_embeddings, text_embeddings, gender_emb), dim=-1)  # [B,AF+TF]
+        else:
+            # Concatenate audio and text embeddings
+            logits_input = torch.cat((audio_embeddings, text_embeddings), dim=-1)  # [B,AF+TF]
         # MLP classification
         logits = self.mlp(logits_input).squeeze(-1)
         return logits
@@ -1454,6 +1501,87 @@ class SERLastLayerEmbeddingTextSpeakerEmbMelSpecModel(SERLastLayerEmbeddingTextM
         mel_spec_embeddings = self._get_mel_spec_embeddings(x)
         # Concatenate audio and text embeddings
         logits_input = torch.cat((audio_embeddings, text_embeddings, speaker_emb, mel_spec_embeddings), dim=-1)
+        # MLP classification
+        logits = self.mlp(logits_input).squeeze(-1)
+        return logits
+
+
+class SERLastLayerEmbeddingTextMelSpecModel(SERLastLayerEmbeddingTextModel):
+    def __init__(
+        self,
+        # Audio projection
+        audio_feat_dim: int = 1024,
+        audio_proj_dropout: float = 0.2,
+        # Text projection
+        text_feat_dim: int = 1024,
+        text_proj_dropout: float = 0.2,
+        # MelSpec encoder
+        mel_spec_encoder_pretrained: bool = True,
+        mel_spec_encoder_embedding_dim: int = 768,
+        mel_spec_encoder_proj_size: int = 512,
+        mel_spec_encoder_proj_dropout: float = 0.2,
+        mel_spec_encoder_freeze_backbone: bool = False,
+        **kwargs
+    ):
+        super().__init__(**kwargs)
+        # Audio projection
+        self.audio_proj = nn.Sequential(
+            nn.Linear(audio_feat_dim, audio_feat_dim),
+            nn.ReLU(),
+            nn.Dropout(audio_proj_dropout),
+        )
+
+        # Text projection
+        self.text_proj = nn.Sequential(
+            nn.Linear(text_feat_dim, text_feat_dim),
+            nn.ReLU(),
+            nn.Dropout(text_proj_dropout),
+        )
+
+        # MelSpec embedding
+        self.mel_spec_encoder = FineTuneCED(
+            pretrained=mel_spec_encoder_pretrained,
+            embedding_dim=mel_spec_encoder_embedding_dim,
+            proj_size=mel_spec_encoder_proj_size,
+            proj_dropout=mel_spec_encoder_proj_dropout,
+            freeze_backbone_flag=mel_spec_encoder_freeze_backbone,
+        )
+
+    def _get_embeddings(self, x: Tuple[torch.Tensor, torch.Tensor, torch.Tensor]) -> torch.Tensor:
+        audio_hidden_states, text, genders, audio = x
+        if self.freeze_text_backbone:
+            with torch.no_grad():
+                text_outputs = self.text_backbone(**text, output_hidden_states=True)
+        else:
+            text_outputs = self.text_backbone(**text, output_hidden_states=True)
+
+        text_hidden_states = self._stack_embeddings(text_outputs.hidden_states)
+
+        return audio_hidden_states, text_hidden_states, genders, audio
+
+    def _get_mel_spec_embeddings(self, x: Tuple[torch.Tensor, torch.Tensor]) -> torch.Tensor:
+        _, _, _, audio = x
+        mel_spec_embeddings = self.mel_spec_encoder(audio)
+        return mel_spec_embeddings
+
+    def forward(self, x: Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]) -> torch.Tensor:
+        audio_hidden_states, text_hidden_states, genders, _ = self._get_embeddings(x)
+        # Apply layer weighting
+        audio_embeddings, text_embeddings = self._apply_pooling(audio_hidden_states, text_hidden_states)
+        # Audio projection
+        audio_embeddings = self.audio_proj(audio_embeddings)
+        # Text projection
+        text_embeddings = self.text_proj(text_embeddings)
+        # Mel Spec embeddings
+        mel_spec_embeddings = self._get_mel_spec_embeddings(x)
+        # Concat Features
+        if self.gender_encoder is not None:
+            # Gender embedding
+            gender_emb = self.gender_encoder(genders)
+            logits_input = torch.cat((audio_embeddings, text_embeddings, mel_spec_embeddings, gender_emb), dim=-1)  # [B,AF+TF]
+        else:
+            # Concatenate audio and text embeddings
+            logits_input = torch.cat((audio_embeddings, text_embeddings, mel_spec_embeddings), dim=-1)  # [B,AF+TF]
         # MLP classification
         logits = self.mlp(logits_input).squeeze(-1)
         return logits

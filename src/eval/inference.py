@@ -148,11 +148,15 @@ def build_dataloaders(
             text_tokenizer=text_tokenizer,
         )
     elif config.model.model_type.lower() == "last_layer_embedding_text":
+        test_data["gender_id"] = test_data[config.datasets.val[0].gender_column].map(
+            config.data.gender2id
+        )
         test_dataset = LastLayerEmbeddingTextDataset(
             data=test_data,
             filename_column=config.datasets.train[0].filename_column,
             target_column="target",
             transcript_column=config.datasets.train[0].transcript_column,
+            gender_column="gender_id",
             base_dir=config.datasets.train[0].base_dir,
             data_type="test",
         )
@@ -218,7 +222,7 @@ def evaluate_model(
 
     None
     """
-    model = PLWrapper.load_from_checkpoint(checkpoint_path, config=config, map_location=device)
+    model = PLWrapper.load_from_checkpoint(checkpoint_path, config=config, inference_mode=False, map_location=device)
     model = model.to(device)
     model.eval()
 
@@ -236,6 +240,11 @@ def evaluate_model(
             inputs = {k: v.to(device) for k, v in inputs.items()}
 
         output = model(inputs)
+
+        # if there is more than 8 classes in logits, remove last 2 classes
+        if output.size(1) > 8:
+            output = output[:, :-2]
+
         # apply softmax and argmax
         output = F.softmax(output, dim=1)
         output = torch.argmax(output, dim=1)
@@ -339,6 +348,25 @@ def main() -> None:
     print(f"F1-Micro: {f1_micro}")
     print(f"Recall: {recall}")
     print(f"Precision: {precision}")
+
+    # plot confusion matrix
+    from sklearn.metrics import confusion_matrix
+    import seaborn as sns
+    import matplotlib.pyplot as plt
+
+    label2id = config.data.label2id
+    id2label = {v: k for k, v in label2id.items()}
+
+    labels = [id2label[i] for i in range(len(id2label))]
+
+    cm = confusion_matrix(targets, predictions)
+    # put labels on x and y axis
+    plt.figure(figsize=(10, 8))
+    sns.heatmap(cm, annot=True, fmt="d", xticklabels=labels, yticklabels=labels)
+    plt.xlabel("Predicted")
+    plt.ylabel("True")
+    plt.savefig("confusion_matrix.png")
+
 
 
 if __name__ == "__main__":

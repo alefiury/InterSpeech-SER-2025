@@ -1,4 +1,4 @@
-title: SER-LastLayer-Embedding-Text-FineTuning-WavLM_Large-(Loss-${loss.name})-(BS-${data.use_balanced_sampling})-(BS-Scheduler-${data.use_balanced_sampling_scheduler})-(BS-Scheduler-Direction-${data.class_weight_direction})-(BS-Scheduler-Degree-${data.class_weight_ratio_degree})-(${model.text_model_name})-(FreezeBackbone-${model.freeze_text_backbone})-(TextAug-${data.use_text_augmentation})-(LayerStrategy-${model.text_layer_weight_strategy})-(Pooling-${model.text_pooling_strategy})-(epochs-${trainer.max_epochs})-(bs-${train.batch_size})-(LR-${optimizer.params.learning_rate})
+title: SER-LastLayer-Embedding-Text-FineTuning-WavLM_Large-(GenderEmb-${model.use_gender_emb})-(Loss-${loss.name})-(BS-${data.use_balanced_sampling})-(BS-Scheduler-${data.use_balanced_sampling_scheduler})-(BS-Scheduler-Direction-${data.class_weight_direction})-(BS-Scheduler-Degree-${data.class_weight_ratio_degree})-(${model.text_model_name})-(FreezeBackbone-${model.freeze_text_backbone})-(TextAug-${data.use_text_augmentation})-(LayerStrategy-${model.text_layer_weight_strategy})-(Pooling-${model.text_pooling_strategy})-(epochs-${trainer.max_epochs})-(bs-${train.batch_size})-(LR-${optimizer.params.learning_rate})
 
 wandb_entity: alefiury
 
@@ -6,7 +6,7 @@ loss:
     name: "focal"
     gamma: 2.0
     alpha: 0.5
-    use_weighted_loss: false # Uses "prior" weights as in https://www.isca-archive.org/odyssey_2024/chen24_odyssey.pdf
+    use_weighted_loss: true # Uses "prior" weights as in https://www.isca-archive.org/odyssey_2024/chen24_odyssey.pdf
 
 datasets:
     train:
@@ -15,14 +15,16 @@ datasets:
           base_dir: "/raid/alefiury/SER/InterSpeech2025/challenge_dataset/wavlm-large"
           filename_column: "FileName"
           transcript_column: "Transcript"
+          gender_column: "Gender"
           target_column: "EmoClass"
 
     val:
         - name: Validation
-          metadata_path: "/raid/alefiury/SER/InterSpeech2025/InterSpeech-SER-2025/Dataset/transcribed_canary_validation_set.csv"
+          metadata_path: "/raid/alefiury/SER/InterSpeech2025/InterSpeech-SER-2025/Dataset/transcribed_canary_complete_dev.csv"
           base_dir: "/raid/alefiury/SER/InterSpeech2025/challenge_dataset/wavlm-large"
           filename_column: "FileName"
           transcript_column: "Transcript"
+          gender_column: "Gender"
           target_column: "EmoClass"
 
 data:
@@ -50,6 +52,11 @@ data:
         "U": 7
     }
 
+    gender2id: {
+        "Male": 0,
+        "Female": 1
+    }
+
 train:
     batch_size: 32
     shuffle: True
@@ -63,9 +70,10 @@ model:
 
     # Text config
     text_model_name: "intfloat/e5-large-v2"
+    # text_model_name: "FacebookAI/roberta-large"
     freeze_text_backbone: true
-    # text_layer_weight_strategy: "per_layer"
-    text_layer_weight_strategy: "weighted_sum"
+    text_layer_weight_strategy: "per_layer"
+    # text_layer_weight_strategy: "weighted_sum"
     text_num_feature_layers: 25
     specific_text_layer_idx: -1
     text_pooling_strategy: "mean"
@@ -81,8 +89,15 @@ model:
     # Projection config
     audio_feat_dim: 1024
     text_feat_dim: 1024
-    audio_proj_dropout: 0.2
-    text_proj_dropout: 0.2
+    audio_proj_dropout: 0.5
+    text_proj_dropout: 0.5
+
+    # Gender emb
+    use_gender_emb: false
+    gender_embedding_dim: 16
+
+    # Transformer config
+    use_transformer_enc: true
 
 optimizer:
     name: "adamw"
@@ -124,4 +139,4 @@ model_checkpoint:
     save_weights_only: true
     monitor: "val/f1-score"
     dirpath: "../checkpoints/ser-2025"
-    filename: "{epoch:02d}-{step:02d}-{val/f1-score:.4f}"
+    filename: "{epoch:02d}-{val/f1-score:.4f}"
