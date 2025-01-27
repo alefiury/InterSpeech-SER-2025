@@ -8,6 +8,9 @@ wandb/
 ssl_checkpoints/
 augmentation_data/
 InterSpeech-SER-2025/
+results_unlabeled/
+results_true_test/
+results/
 
 # C extensions
 *.so

@@ -1,30 +1,30 @@
-title: SER-Dynamic_Audio_Text-FineTuning-(Loss-${loss.name})-(BS-${data.use_balanced_sampling})-(BS-Scheduler-${data.use_balanced_sampling_scheduler})-(TextAug-${data.use_text_augmentation})-(${model.audio_model_name})-(FreezeBackbone-${model.freeze_audio_backbone})-(LayerStrategy-${model.audio_layer_weight_strategy})-(Pooling-${model.audio_pooling_strategy})-(${model.text_model_name})-(FreezeBackbone-${model.freeze_text_backbone})-(LayerStrategy-${model.text_layer_weight_strategy})-(Pooling-${model.text_pooling_strategy})-(epochs-${trainer.max_epochs})-(bs-${train.batch_size})-(LR-${optimizer.params.learning_rate})
+title: SER-Dynamic_Audio_Text-FineTuning-(GenderEmb-${model.use_gender_emb})-(Loss-${loss.name})-(BS-${data.use_balanced_sampling})-(BS-Scheduler-${data.use_balanced_sampling_scheduler})-(TextAug-${data.use_text_augmentation})-(${model.audio_model_name})-(FreezeBackbone-${model.freeze_audio_backbone})-(LayerStrategy-${model.audio_layer_weight_strategy})-(Pooling-${model.audio_pooling_strategy})-(${model.text_model_name})-(FreezeBackbone-${model.freeze_text_backbone})-(LayerStrategy-${model.text_layer_weight_strategy})-(Pooling-${model.text_pooling_strategy})-(epochs-${trainer.max_epochs})-(bs-${train.batch_size})-(LR-${optimizer.params.learning_rate})
 
 wandb_entity: alefiury
 
 loss:
-    name: "focal"
+    name: "ce"
     gamma: 2.0
     alpha: 0.5
-    use_weighted_loss: false # Uses "prior" weights as in https://www.isca-archive.org/odyssey_2024/chen24_odyssey.pdf
+    use_weighted_loss: true # Uses "prior" weights as in https://www.isca-archive.org/odyssey_2024/chen24_odyssey.pdf
 
 datasets:
     train:
         - name: Train
-          metadata_path: "/raid/alefiury/SER/InterSpeech2025/InterSpeech-SER-2025/Dataset/transcribed_canary_train_set.csv"
-          base_dir: "/raid/alefiury/SER/InterSpeech2025/challenge_dataset/Audios"
+          metadata_path: "/hadatasets/alef.ferreira/SER/Interspeech/InterSpeech-SER-2025/Dataset/transcribed_canary_train_set.csv"
+          base_dir: "/hadatasets/alef.ferreira/SER/Interspeech/Audios"
           filename_column: "FileName"
           transcript_column: "Transcript"
-          speakeremb_base_dir: "/raid/alefiury/SER/InterSpeech2025/challenge_dataset/TitaNet-large"
+          gender_column: "Gender"
           target_column: "EmoClass"
 
     val:
         - name: Validation
-          metadata_path: "/raid/alefiury/SER/InterSpeech2025/InterSpeech-SER-2025/Dataset/transcribed_canary_validation_set.csv"
-          base_dir: "/raid/alefiury/SER/InterSpeech2025/challenge_dataset/Audios"
+          metadata_path: "/hadatasets/alef.ferreira/SER/Interspeech/InterSpeech-SER-2025/Dataset/transcribed_canary_complete_dev.csv"
+          base_dir: "/hadatasets/alef.ferreira/SER/Interspeech/Audios"
           filename_column: "FileName"
           transcript_column: "Transcript"
-          speakeremb_base_dir: "/raid/alefiury/SER/InterSpeech2025/TitaNet-large"
+          gender_column: "Gender"
           target_column: "EmoClass"
 
 data:
@@ -33,25 +33,27 @@ data:
     target_sr: 16000
 
     use_balanced_sampling: true # If true, the dataset will be balanced based on the inverse frequency of the classes
-    use_balanced_sampling_scheduler: true # If true, the dataset will be balanced based on the inverse frequency of the classes, but the weights will be updated during training
+    use_balanced_sampling_scheduler: false # If true, the dataset will be balanced based on the inverse frequency of the classes, but the weights will be updated during training
+    class_weight_direction: "to_uniform" # can be 'to_uniform' or 'to_distribution', this parameter is used to define the direction of the class weights
+    class_weight_ratio_degree: 1 # 1 = linear, > 1 = polynomial
 
     mixup_alpha: 0.0 # 0.0 to disable mixup, if you want to use mixup, set this value to 0.5 (recommended)
 
     use_rand_truncation: true # If true, the audio will be randomly truncated between min_duration and the original duration
-    min_duration: 2.0 # min duration (in seconds), only used if use_rand_truncation is True
+    min_duration: 3.0 # min duration (in seconds), only used if use_rand_truncation is True
 
     use_background_noise: true # If true, background noise will be added to the audio (Music and environmental noise)
-    background_noise_dir: "/raid/alefiury/SER/InterSpeech2025/InterSpeech-SER-2025/augmentation_data/musan"
+    background_noise_dir: "/hadatasets/alef.ferreira/SER/Interspeech/InterSpeech-SER-2025/augmentation_data/musan"
     background_noise_min_snr_in_db: 3.0
     background_noise_max_snr_in_db: 15.0
     background_noise_p: 0.5
 
     use_rir: true # If true, RIRs (reverberation) will be added to the audio
-    rir_dir: "/raid/alefiury/SER/InterSpeech2025/InterSpeech-SER-2025/augmentation_data/RIRS_NOISES"
+    rir_dir: "/hadatasets/alef.ferreira/SER/Interspeech/InterSpeech-SER-2025/augmentation_data/RIRS_NOISES"
     rir_p: 0.5
 
     # Text augmentation
-    use_text_augmentation: false # If true, text augmentation will be used (random word deletion)
+    use_text_augmentation: true # If true, text augmentation will be used (random word deletion)
     text_augmentation_p: 0.5
 
     # label2id must represent the names of the target in the metadata file
@@ -66,8 +68,13 @@ data:
         "U": 7
     }
 
+    gender2id: {
+        "Male": 0,
+        "Female": 1
+    }
+
 train:
-    batch_size: 16
+    batch_size: 32
     shuffle: True
     num_workers: 12
 
@@ -106,8 +113,15 @@ model:
     # Projection config
     audio_feat_dim: 1024
     text_feat_dim: 1024
-    audio_proj_dropout: 0.2
-    text_proj_dropout: 0.2
+    audio_proj_dropout: 0.5
+    text_proj_dropout: 0.5
+
+    # Gender emb
+    use_gender_emb: false
+    gender_embedding_dim: 16
+
+    # Transformer config
+    use_transformer_enc: true
 
 optimizer:
     name: "adamw"
@@ -138,7 +152,7 @@ tags:
 
 trainer:
     accelerator: "gpu"
-    max_epochs: 10
+    max_epochs: 20
     num_sanity_val_steps: 2
     overfit_batches: 0.0
     log_every_n_steps: 10
@@ -146,7 +160,7 @@ trainer:
     gradient_clip_algorithm: "norm"
     val_check_interval: 1.0
     accumulate_grad_batches: 1
-    reload_dataloaders_every_n_epochs: 1 # This should be set to 1 if "data.use_balanced_sampling_scheduler" is True
+    reload_dataloaders_every_n_epochs: 0 # This should be set to 1 if "data.use_balanced_sampling_scheduler" is True
 
 model_checkpoint:
     mode: "max"

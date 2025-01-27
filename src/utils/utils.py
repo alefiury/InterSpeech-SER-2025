@@ -7,6 +7,13 @@ from utils.dataloader import (
     DynamicAudioTextSpeakerEmbDataset,
     EmbeddingDataset,
     LastLayerEmbeddingDataset,
+    LastLayerEmbeddingTextDataset,
+    LastLayerEmbeddingTextMelSpecDataset,
+    BimodalEmbeddingDataset,
+    BimodalEmbeddingMelSpecDataset,
+    BimodalEmbeddingF0Dataset,
+    BimodalEmbeddingF0MelSpecDataset,
+    DynamicAudioTextF0MelSpecDataset
 )
 
 
@@ -32,6 +39,17 @@ def build_dataloaders(config):
     val_data["target"] = val_data[config.datasets.val[0].target_column].map(
         config.data.label2id
     )
+
+    # check if "config.data.gender2id" exists
+    print("-"*100)
+    if hasattr(config.data, "gender2id"):
+        print("Gender2id exists!")
+        train_data["gender_id"] = train_data[config.datasets.train[0].gender_column].map(
+            config.data.gender2id
+        )
+        val_data["gender_id"] = val_data[config.datasets.val[0].gender_column].map(
+            config.data.gender2id
+        )
 
     if config.model.model_type.lower() == "embedding":
         train_dataset = EmbeddingDataset(
@@ -71,6 +89,8 @@ def build_dataloaders(config):
             data=train_data,
             base_dir=config.datasets.train[0].base_dir,
             filename_column=config.datasets.train[0].filename_column,
+            # gender
+            gender_column="gender_id",
             target_column="target",
             mixup_alpha=config.data.mixup_alpha,
             use_rand_truncation=config.data.use_rand_truncation,
@@ -93,6 +113,8 @@ def build_dataloaders(config):
         val_dataset = DynamicDataset(
             data=val_data,
             filename_column=config.datasets.train[0].filename_column,
+            # gender
+            gender_column="gender_id",
             target_column="target",
             base_dir=config.datasets.train[0].base_dir,
             mixup_alpha=config.data.mixup_alpha,
@@ -101,12 +123,15 @@ def build_dataloaders(config):
             target_sr=config.data.target_sr,
         )
     elif config.model.model_type.lower() == "dynamic_audio_text" \
-        or config.model.model_type.lower() == "xeus_text":
+        or config.model.model_type.lower() == "xeus_text" \
+            or config.model.model_type.lower() == "dynamic_audio_text_melspec":
         train_dataset = DynamicAudioTextDataset(
             data=train_data,
             base_dir=config.datasets.train[0].base_dir,
             filename_column=config.datasets.train[0].filename_column,
             transcript_column=config.datasets.train[0].transcript_column,
+            # gender
+            gender_column="gender_id",
             target_column="target",
             mixup_alpha=config.data.mixup_alpha,
             use_rand_truncation=config.data.use_rand_truncation,
@@ -133,6 +158,8 @@ def build_dataloaders(config):
             data=val_data,
             filename_column=config.datasets.train[0].filename_column,
             transcript_column=config.datasets.train[0].transcript_column,
+            # gender
+            gender_column="gender_id",
             target_column="target",
             base_dir=config.datasets.train[0].base_dir,
             mixup_alpha=config.data.mixup_alpha,
@@ -184,6 +211,231 @@ def build_dataloaders(config):
             class_num=config.data.num_classes,
             target_sr=config.data.target_sr,
         )
+
+    elif config.model.model_type.lower() == "last_layer_embedding_text":
+        train_dataset = LastLayerEmbeddingTextDataset(
+            data=train_data,
+            filename_column=config.datasets.train[0].filename_column,
+            target_column="target",
+            transcript_column=config.datasets.train[0].transcript_column,
+            gender_column="gender_id",
+            base_dir=config.datasets.train[0].base_dir,
+            data_type="train",
+            # text augmentation parameters
+            use_text_augmentation=config.data.use_text_augmentation,
+            text_augmentation_p=config.data.text_augmentation_p,
+            # SeqAug parameters
+            use_seqaug=config.data.use_seqaug,
+            seqaug_alpha=config.data.seqaug_alpha,
+            seqaug_p=config.data.seqaug_p,
+        )
+
+        val_dataset = LastLayerEmbeddingTextDataset(
+            data=val_data,
+            filename_column=config.datasets.train[0].filename_column,
+            target_column="target",
+            transcript_column=config.datasets.train[0].transcript_column,
+            gender_column="gender_id",
+            base_dir=config.datasets.train[0].base_dir,
+            data_type="val",
+        )
+
+    elif config.model.model_type.lower() == "last_layer_embedding_text_melspec":
+        train_dataset = LastLayerEmbeddingTextMelSpecDataset(
+            data=train_data,
+            target_sr=config.data.target_sr,
+            filename_column=config.datasets.train[0].filename_column,
+            target_column="target",
+            transcript_column=config.datasets.train[0].transcript_column,
+            gender_column="gender_id",
+            audio_base_dir=config.datasets.train[0].audio_base_dir,
+            base_dir=config.datasets.train[0].base_dir,
+            data_type="train",
+            # text augmentation parameters
+            use_text_augmentation=config.data.use_text_augmentation,
+            text_augmentation_p=config.data.text_augmentation_p,
+            # Random truncation parameters
+            use_rand_truncation=config.data.use_rand_truncation,
+            min_duration=config.data.min_duration,
+            # background noise parameters
+            use_background_noise=config.data.use_background_noise,
+            background_noise_dir=config.data.background_noise_dir,
+            background_noise_min_snr_in_db=config.data.background_noise_min_snr_in_db,
+            background_noise_max_snr_in_db=config.data.background_noise_max_snr_in_db,
+            background_noise_p=config.data.background_noise_p,
+            # impulse response parameters
+            use_rir=config.data.use_rir,
+            rir_dir=config.data.rir_dir,
+            rir_p=config.data.rir_p,
+        )
+
+        val_dataset = LastLayerEmbeddingTextMelSpecDataset(
+            data=val_data,
+            target_sr=config.data.target_sr,
+            filename_column=config.datasets.train[0].filename_column,
+            target_column="target",
+            transcript_column=config.datasets.train[0].transcript_column,
+            gender_column="gender_id",
+            audio_base_dir=config.datasets.train[0].audio_base_dir,
+            base_dir=config.datasets.train[0].base_dir,
+            data_type="val",
+        )
+
+    elif config.model.model_type.lower() == "bimodal_embedding":
+        train_dataset = BimodalEmbeddingDataset(
+            data=train_data,
+            filename_column=config.datasets.train[0].filename_column,
+            target_column="target",
+            audio_base_dir=config.datasets.train[0].audio_base_dir,
+            text_base_dir=config.datasets.train[0].text_base_dir,
+            data_type="train",
+            # SeqAug parameters (Optional)
+            use_seqaug=config.data.use_seqaug,
+            seqaug_alpha=config.data.seqaug_alpha,
+            seqaug_p=config.data.seqaug_p,
+            # Mixup parameters (Optional)
+            mixup_alpha=config.data.mixup_alpha,
+        )
+
+        val_dataset = BimodalEmbeddingDataset(
+            data=val_data,
+            filename_column=config.datasets.train[0].filename_column,
+            target_column="target",
+            audio_base_dir=config.datasets.train[0].audio_base_dir,
+            text_base_dir=config.datasets.train[0].text_base_dir,
+            # Mixup parameters (Optional)
+            mixup_alpha=config.data.mixup_alpha,
+            data_type="val",
+        )
+    elif config.model.model_type.lower() == "bimodal_embedding_melspec":
+        train_dataset = BimodalEmbeddingMelSpecDataset(
+            data=train_data,
+            filename_column=config.datasets.train[0].filename_column,
+            target_column="target",
+            base_dir=config.datasets.train[0].base_dir,
+            audio_base_dir=config.datasets.train[0].audio_base_dir,
+            text_base_dir=config.datasets.train[0].text_base_dir,
+            target_sr=config.data.target_sr,
+            # Random truncation parameters (Optional)
+            use_rand_truncation=config.data.use_rand_truncation,
+            min_duration=config.data.min_duration,
+            # SeqAug parameters (Optional)
+            use_seqaug=config.data.use_seqaug,
+            seqaug_alpha=config.data.seqaug_alpha,
+            seqaug_p=config.data.seqaug_p,
+            data_type="train",
+        )
+
+        val_dataset = BimodalEmbeddingMelSpecDataset(
+            data=val_data,
+            filename_column=config.datasets.train[0].filename_column,
+            target_column="target",
+            base_dir=config.datasets.train[0].base_dir,
+            audio_base_dir=config.datasets.train[0].audio_base_dir,
+            text_base_dir=config.datasets.train[0].text_base_dir,
+            target_sr=config.data.target_sr,
+            data_type="val",
+        )
+    elif config.model.model_type.lower() == "bimodal_embedding_f0":
+        train_dataset = BimodalEmbeddingF0Dataset(
+            data=train_data,
+            filename_column=config.datasets.train[0].filename_column,
+            target_column="target",
+            audio_base_dir=config.datasets.train[0].audio_base_dir,
+            text_base_dir=config.datasets.train[0].text_base_dir,
+            f0_base_dir=config.datasets.train[0].f0_base_dir,
+            data_type="train",
+            # SeqAug parameters (Optional)
+            use_seqaug=config.data.use_seqaug,
+            seqaug_alpha=config.data.seqaug_alpha,
+            seqaug_p=config.data.seqaug_p,
+        )
+
+        val_dataset = BimodalEmbeddingF0Dataset(
+            data=val_data,
+            filename_column=config.datasets.train[0].filename_column,
+            target_column="target",
+            audio_base_dir=config.datasets.train[0].audio_base_dir,
+            text_base_dir=config.datasets.train[0].text_base_dir,
+            f0_base_dir=config.datasets.train[0].f0_base_dir,
+            data_type="val",
+        )
+    elif config.model.model_type.lower() == "bimodal_embedding_f0_melspec":
+        train_dataset = BimodalEmbeddingF0MelSpecDataset(
+            data=train_data,
+            filename_column=config.datasets.train[0].filename_column,
+            target_column="target",
+            base_dir=config.datasets.train[0].base_dir,
+            audio_base_dir=config.datasets.train[0].audio_base_dir,
+            text_base_dir=config.datasets.train[0].text_base_dir,
+            f0_base_dir=config.datasets.train[0].f0_base_dir,
+            target_sr=config.data.target_sr,
+            # Random truncation parameters (Optional)
+            use_rand_truncation=config.data.use_rand_truncation,
+            min_duration=config.data.min_duration,
+            # SeqAug parameters (Optional)
+            use_seqaug=config.data.use_seqaug,
+            seqaug_alpha=config.data.seqaug_alpha,
+            seqaug_p=config.data.seqaug_p,
+            data_type="train",
+        )
+
+        val_dataset = BimodalEmbeddingF0MelSpecDataset(
+            data=val_data,
+            filename_column=config.datasets.train[0].filename_column,
+            target_column="target",
+            base_dir=config.datasets.train[0].base_dir,
+            audio_base_dir=config.datasets.train[0].audio_base_dir,
+            text_base_dir=config.datasets.train[0].text_base_dir,
+            f0_base_dir=config.datasets.train[0].f0_base_dir,
+            target_sr=config.data.target_sr,
+            data_type="val",
+        )
+    elif config.model.model_type.lower() == "dynamic_audio_text_f0_melspec":
+        train_dataset = DynamicAudioTextF0MelSpecDataset(
+            data=train_data,
+            base_dir=config.datasets.train[0].base_dir,
+            f0_base_dir=config.datasets.train[0].f0_base_dir,
+            filename_column=config.datasets.train[0].filename_column,
+            transcript_column=config.datasets.train[0].transcript_column,
+            # gender
+            gender_column="gender_id",
+            target_column="target",
+            mixup_alpha=config.data.mixup_alpha,
+            use_rand_truncation=config.data.use_rand_truncation,
+            min_duration=config.data.min_duration,
+            data_type="train",
+            class_num=config.data.num_classes,
+            target_sr=config.data.target_sr,
+            # background noise parameters
+            use_background_noise=config.data.use_background_noise,
+            background_noise_dir=config.data.background_noise_dir,
+            background_noise_min_snr_in_db=config.data.background_noise_min_snr_in_db,
+            background_noise_max_snr_in_db=config.data.background_noise_max_snr_in_db,
+            background_noise_p=config.data.background_noise_p,
+            # impulse response parameters
+            use_rir=config.data.use_rir,
+            rir_dir=config.data.rir_dir,
+            rir_p=config.data.rir_p,
+            # text augmentation parameters
+            use_text_augmentation=config.data.use_text_augmentation,
+            text_augmentation_p=config.data.text_augmentation_p,
+        )
+
+        val_dataset = DynamicAudioTextF0MelSpecDataset(
+            data=val_data,
+            filename_column=config.datasets.train[0].filename_column,
+            transcript_column=config.datasets.train[0].transcript_column,
+            f0_base_dir=config.datasets.train[0].f0_base_dir,
+            gender_column="gender_id",
+            target_column="target",
+            base_dir=config.datasets.train[0].base_dir,
+            mixup_alpha=config.data.mixup_alpha,
+            data_type="val",
+            class_num=config.data.num_classes,
+            target_sr=config.data.target_sr,
+        )
+
 
     return train_dataset, val_dataset
 

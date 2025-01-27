@@ -17,7 +17,7 @@ except ImportError:
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
 def load_model():
-    model_path = "/raid/alefiury/SER/InterSpeech2025/InterSpeech-SER-2025/ssl_checkpoints/XEUS/xeus_checkpoint.pth"
+    model_path = "/hadatasets/alef.ferreira/SER/Interspeech/InterSpeech-SER-2025/ssl_checkpoints/XEUS/xeus_checkpoint.pth"
     model, _ = SSLTask.build_model_from_file(
         None,
         model_path,

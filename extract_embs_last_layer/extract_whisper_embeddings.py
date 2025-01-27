@@ -66,6 +66,9 @@ def extract_whisper_embeddings(
             resampler = torchaudio.transforms.Resample(sr, 16000)
             audio_data = resampler(audio_data)
 
+        length = len(audio_data)
+        n_frames = length // 320
+
         audio_data = audio_data.squeeze()
         # Extract Embedding
         input_features = processor(
@@ -75,6 +78,8 @@ def extract_whisper_embeddings(
         ).to(device)
         with torch.no_grad():
             hidden_states = model(**input_features).last_hidden_state
+
+        hidden_states = hidden_states[0, :n_frames, :].unsqueeze(0)
         # Saving embedding with the same subdirectory structure
         output_filename = basename(filepath).split(".")[0] + ".pt"
         output_filepath = join(output_subdir, output_filename)

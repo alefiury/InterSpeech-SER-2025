@@ -16,7 +16,7 @@ import pandas as pd
 from tqdm import tqdm
 from torch.utils.data import DataLoader
 import torch.nn.functional as F
-from transformers import AutoFeatureExtractor, AutoTokenizer
+from transformers import AutoFeatureExtractor, AutoTokenizer, BatchEncoding
 from pytorch_lightning.loggers import WandbLogger
 from pytorch_lightning.callbacks import ModelCheckpoint, LearningRateMonitor
 from sklearn.metrics import accuracy_score, f1_score, recall_score, precision_score
@@ -28,6 +28,12 @@ from utils.dataloader import (
     DynamicAudioTextSpeakerEmbDataset,
     EmbeddingDataset,
     LastLayerEmbeddingDataset,
+    LastLayerEmbeddingTextDataset,
+    LastLayerEmbeddingTextMelSpecDataset,
+    BimodalEmbeddingDataset,
+    BimodalEmbeddingMelSpecDataset,
+    BimodalEmbeddingF0Dataset,
+    BimodalEmbeddingF0MelSpecDataset,
 )
 
 from utils.dataloader import (
@@ -38,7 +44,13 @@ from utils.dataloader import (
     EmbeddingCollate,
     LastLayerEmbeddingCollate,
     XEUSNestTextCollate,
-    XEUSNestTextSpeakerEmbCollate
+    XEUSNestTextSpeakerEmbCollate,
+    LastLayerEmbeddingTextCollate,
+    LastLayerEmbeddingTextMelSpecCollate,
+    BimodalEmbeddingCollate,
+    BimodalEmbeddingMelSpecCollate,
+    BimodalEmbeddingF0Collate,
+    BimodalEmbeddingF0MelSpecCollate,
 )
 
 
@@ -65,6 +77,12 @@ def build_dataloaders(
     test_data["target"] = test_data[target_column].map(
         config.data.label2id
     )
+
+    # check if "gender2id" exists in the config.data
+    if "gender2id" in config.data:
+        test_data["gender_id"] = test_data[config.datasets.val[0].gender_column].map(
+            config.data.gender2id
+        )
 
     if config.model.model_type.lower() == "embedding":
         test_dataset = EmbeddingDataset(
@@ -137,6 +155,7 @@ def build_dataloaders(
             data=test_data,
             filename_column=config.datasets.train[0].filename_column,
             transcript_column=config.datasets.train[0].transcript_column,
+            gender_column="gender_id",
             speakeremb_base_dir=config.datasets.train[0].speakeremb_base_dir,
             target_column="target",
             base_dir=config.datasets.train[0].base_dir,
@@ -161,6 +180,59 @@ def build_dataloaders(
                     text_tokenizer=text_tokenizer,
                 )
 
+    elif config.model.model_type.lower() == "last_layer_embedding_text":
+        test_dataset = LastLayerEmbeddingTextDataset(
+            data=test_data,
+            filename_column=config.datasets.train[0].filename_column,
+            target_column="target",
+            transcript_column=config.datasets.train[0].transcript_column,
+            gender_column="gender_id",
+            base_dir=config.datasets.train[0].base_dir,
+            data_type="test",
+        )
+
+        text_tokenizer = AutoTokenizer.from_pretrained(config.model.text_model_name)
+        collate_fn = LastLayerEmbeddingTextCollate(text_tokenizer=text_tokenizer)
+    elif config.model.model_type.lower() == "last_layer_embedding_text_melspec":
+        test_dataset = LastLayerEmbeddingTextMelSpecDataset(
+            data=test_data,
+            target_sr=config.data.target_sr,
+            filename_column=config.datasets.train[0].filename_column,
+            target_column="target",
+            transcript_column=config.datasets.train[0].transcript_column,
+            gender_column="gender_id",
+            audio_base_dir=config.datasets.train[0].audio_base_dir,
+            base_dir=config.datasets.train[0].base_dir,
+            data_type="test",
+        )
+
+        text_tokenizer = AutoTokenizer.from_pretrained(config.model.text_model_name)
+        collate_fn = LastLayerEmbeddingTextMelSpecCollate(text_tokenizer=text_tokenizer)
+
+    elif config.model.model_type.lower() == "bimodal_embedding":
+        test_dataset = BimodalEmbeddingDataset(
+            data=test_data,
+            filename_column=config.datasets.train[0].filename_column,
+            target_column="target",
+            audio_base_dir=config.datasets.train[0].audio_base_dir,
+            text_base_dir=config.datasets.train[0].text_base_dir,
+            data_type="test",
+        )
+
+        collate_fn = BimodalEmbeddingCollate()
+    elif config.model.model_type.lower() == "bimodal_embedding_f0_melspec":
+        test_dataset = BimodalEmbeddingF0MelSpecDataset(
+            data=test_data,
+            filename_column=config.datasets.train[0].filename_column,
+            target_column="target",
+            base_dir=config.datasets.train[0].base_dir,
+            audio_base_dir=config.datasets.train[0].audio_base_dir,
+            text_base_dir=config.datasets.train[0].text_base_dir,
+            f0_base_dir=config.datasets.train[0].f0_base_dir,
+            target_sr=config.data.target_sr,
+            data_type="test",
+        )
+        collate_fn = BimodalEmbeddingF0MelSpecCollate()
 
     test_dataloader = DataLoader(
         test_dataset,
@@ -205,16 +277,30 @@ def evaluate_model(
     for batch in tqdm(test_dataloader, desc="Evaluating"):
         inputs, target = batch
 
+        # print(inputs)
+
         if isinstance(inputs, torch.Tensor):
+            # If inputs is a single tensor
             inputs = inputs.to(device)
-        if isinstance(inputs, list) or isinstance(inputs, tuple):
-            # Check aimed for XEUS and NEST models
-            if isinstance(inputs[0], dict):
-                inputs = [{k: v.to(device) for k, v in i.items()} for i in inputs]
-            else:
-                inputs = [i.to(device) for i in inputs]
-        else:
+        elif isinstance(inputs, (list, tuple)):
+            # If inputs is a list or tuple, process each element based on its type
+            processed_inputs = []
+            for i in inputs:
+                if isinstance(i, dict):
+                    # If the element is a dictionary, move each tensor to the device
+                    processed_dict = {k: v.to(device) for k, v in i.items()}
+                    processed_inputs.append(processed_dict)
+                else:
+                    # If the element is a tensor, move it to the device
+                    processed_inputs.append(i.to(device))
+                # else:
+                #     raise TypeError(f"Unsupported type in inputs tuple: {type(i)}")
+            inputs = tuple(processed_inputs)
+        elif isinstance(inputs, dict):
+            # If inputs is a dictionary, move each tensor to the device
             inputs = {k: v.to(device) for k, v in inputs.items()}
+        else:
+            raise TypeError(f"Unsupported type for inputs: {type(inputs)}")
 
         output = model(inputs)
         # apply softmax and argmax
@@ -309,6 +395,25 @@ def main() -> None:
         device=f"cuda:{args.gpu}"
     )
 
+    output_dir = "results"
+    os.makedirs(output_dir, exist_ok=True)
+    filename = f"results-{args.checkpoint_path.split('/')[-4]}-{os.path.basename(args.test_metadata_path)[:-4]}"
+    output_filepath = os.path.join(output_dir, filename)
+
+    df_test_metadata = pd.read_csv(args.test_metadata_path)
+
+    filenames = df_test_metadata[args.filename_column].tolist()
+
+    df_submission = pd.DataFrame(
+        {
+            "FileName": filenames,
+            "pred": predictions,
+            "target": targets,
+        }
+    )
+
+    df_submission.to_csv(output_filepath+".csv", index=False)
+
     accuracy = accuracy_score(targets, predictions)
     f1 = f1_score(targets, predictions, average="macro")
     f1_micro = f1_score(targets, predictions, average="micro")
@@ -321,6 +426,31 @@ def main() -> None:
     print(f"Recall: {recall}")
     print(f"Precision: {precision}")
 
+    # write file with results
+    with open(output_filepath+".txt", "w") as f:
+        f.write(f"Accuracy: {accuracy}\n")
+        f.write(f"F1-Macro: {f1}\n")
+        f.write(f"F1-Micro: {f1_micro}\n")
+        f.write(f"Recall: {recall}\n")
+        f.write(f"Precision: {precision}")
+
+    # plot confusion matrix
+    from sklearn.metrics import confusion_matrix
+    import seaborn as sns
+    import matplotlib.pyplot as plt
+
+    label2id = config.data.label2id
+    id2label = {v: k for k, v in label2id.items()}
+
+    labels = [id2label[i] for i in range(len(id2label))]
+
+    cm = confusion_matrix(targets, predictions)
+    # put labels on x and y axis
+    plt.figure(figsize=(10, 8))
+    sns.heatmap(cm, annot=True, fmt="d", xticklabels=labels, yticklabels=labels)
+    plt.xlabel("Predicted")
+    plt.ylabel("True")
+    plt.savefig(output_filepath+"-confusion_matrix.png")
 
 if __name__ == "__main__":
     main()

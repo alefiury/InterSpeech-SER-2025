@@ -1,6 +1,6 @@
 #!/bin/bash
-CUDA_DEVICE=3
-BASE_DIR="/raid/alefiury/SER/InterSpeech2025/challenge_dataset/"
+CUDA_DEVICE=4
+BASE_DIR="/hadatasets/alef.ferreira/SER/Interspeech"
 INPUT_DIR="Audios"
 
 # Wav2vec2
@@ -38,24 +38,30 @@ INPUT_DIR="Audios"
 #     -m=$MODEL_NAME
 
 # TitaNet
-OUTPUT_DIR="TitaNet-large"
-CUDA_VISIBLE_DEVICES=$CUDA_DEVICE python3 extract_titanet_embeddings.py \
-    -b=$BASE_DIR \
-    -i=$INPUT_DIR \
-    -o=$OUTPUT_DIR
+# OUTPUT_DIR="TitaNet-large"
+# CUDA_VISIBLE_DEVICES=$CUDA_DEVICE python3 extract_titanet_embeddings.py \
+#     -b=$BASE_DIR \
+#     -i=$INPUT_DIR \
+#     -o=$OUTPUT_DIR
 
-# WavLM
-MODEL_NAME="wavlm-large"
-OUTPUT_DIR="wavlm-large"
-CUDA_VISIBLE_DEVICES=$CUDA_DEVICE python3 extract_wavlm_embeddings.py \
-    -b=$BASE_DIR \
-    -i=$INPUT_DIR \
-    -o=$OUTPUT_DIR \
-    -m=$MODEL_NAME
+# OUTPUT_DIR="x_features"
+# CUDA_VISIBLE_DEVICES=$CUDA_DEVICE python3 extract_x.py \
+#     -b=$BASE_DIR \
+#     -i=$INPUT_DIR \
+#     -o=$OUTPUT_DIR
+
+# # WavLM
+# MODEL_NAME="wavlm-large"
+# OUTPUT_DIR="wavlm-large"
+# CUDA_VISIBLE_DEVICES=$CUDA_DEVICE python3 extract_wavlm_embeddings.py \
+#     -b=$BASE_DIR \
+#     -i=$INPUT_DIR \
+#     -o=$OUTPUT_DIR \
+#     -m=$MODEL_NAME
 
 # Whisper
 MODEL_NAME="whisper-large-v3"
-OUTPUT_DIR="whisper-large-v3"
+OUTPUT_DIR="whisper-large-v3-v2"
 CUDA_VISIBLE_DEVICES=$CUDA_DEVICE python3 extract_whisper_embeddings.py \
     -b=$BASE_DIR \
     -i=$INPUT_DIR \

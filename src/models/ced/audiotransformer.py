@@ -245,8 +245,14 @@ class AudioTransformer(nn.Module):
                                            patch_size=self.patch_size,
                                            flatten=False,
                                            patch_stride=self.patch_stride)
+        # self.spectransforms = nn.Sequential(
+        # ) if spectransforms is None else spectransforms
+
         self.spectransforms = nn.Sequential(
-        ) if spectransforms is None else spectransforms
+            audio_transforms.FrequencyMasking(freq_mask_param=24),
+            audio_transforms.TimeMasking(time_mask_param=192),
+        )
+
         self.wavtransforms = nn.Sequential(
         ) if wavtransforms is None else wavtransforms
 
@@ -415,7 +421,7 @@ class AudioTransformer(nn.Module):
         if self.training:
             x = self.wavtransforms(x.unsqueeze(1)).squeeze(1)
         x = self.front_end(x)
-        if self.training:
+        if self.training and torch.rand(1) < 0.5:
             x = self.spectransforms(x)
         x = self.forward_spectrogram(x)
         return x

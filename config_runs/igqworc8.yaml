@@ -1,0 +1,164 @@
+data:
+  num_classes: 8
+  target_sr: 16000
+  use_balanced_sampling: true
+  use_balanced_sampling_scheduler: true
+  class_weight_direction: to_uniform
+  class_weight_ratio_degree: 1
+  use_seqaug: true
+  seqaug_alpha: 0.5
+  seqaug_p: 0.5
+  use_rand_truncation: true
+  min_duration: 3.0
+  label2id:
+    A: 0
+    C: 1
+    D: 2
+    F: 3
+    H: 4
+    N: 5
+    S: 6
+    U: 7
+loss:
+  name: ce
+  gamma: 2.0
+  alpha: 0.5
+  use_weighted_loss: true
+tags:
+- ${train.batch_size}-BS
+- LR-${optimizer.params.learning_rate}
+- WD-${optimizer.params.weight_decay}
+- ${model.mlp_input_dim}-AH
+- ${model.mlp_hidden_dim}-HL
+- ${model.mlp_num_layers}-IS
+model:
+  model_type: bimodal_embedding_f0_melspec
+  audio_pooling_strategy: mean
+  text_pooling_strategy: mean
+  mlp_input_dim: 3072
+  mlp_hidden_dim: ${model.mlp_input_dim}
+  mlp_num_layers: 1
+  mlp_output_size: ${data.num_classes}
+  mlp_dropout: 0.5
+  mlp_activation_func: relu
+  audio_feat_dim: 1280
+  audio_proj_dim: 512
+  text_feat_dim: 1024
+  text_proj_dim: 512
+  audio_proj_dropout: 0.5
+  text_proj_dropout: 0.5
+  mel_spec_encoder_pretrained: true
+  mel_spec_encoder_embedding_dim: 384
+  mel_spec_encoder_proj_size: 512
+  mel_spec_encoder_proj_dropout: 0.5
+  mel_spec_encoder_freeze_backbone: false
+  num_f0_bins: 256
+  f0_embedding_dim: 512
+  f0_proj_size: 512
+  f0_proj_dropout: 0.5
+  f0_pooling_strategy: mean
+  use_transformer_enc: false
+  use_bi_lstm_cross_attn: true
+  use_cross_f0_attn: false
+title: SER-Bimodal-Embedding-MelSpec-F0-FineTuning-WhisperLargeV3-(F0CrossAtt-False)-(Loss-ce)-(Prior-True)-(BS-True)-(BS-Scheduler-True)-(BS-Scheduler-Direction-to_uniform)-(BS-Scheduler-Degree-1)-(AudioPooling-mean)-(TextPooling-mean)-(epochs-50)-(bs-32)-(LR-5e-05)
+train:
+  batch_size: 32
+  shuffle: true
+  num_workers: 12
+_wandb:
+  m: []
+  t:
+    '1':
+    - 1
+    - 5
+    - 9
+    - 11
+    - 41
+    - 49
+    - 50
+    - 51
+    - 53
+    - 55
+    - 79
+    - 103
+    - 106
+    '2':
+    - 1
+    - 5
+    - 9
+    - 11
+    - 41
+    - 49
+    - 50
+    - 51
+    - 53
+    - 55
+    - 79
+    - 103
+    - 106
+    '3':
+    - 13
+    - 15
+    - 16
+    - 23
+    - 55
+    '4': 3.10.14
+    '5': 0.18.0
+    '6': 4.44.2
+    '8':
+    - 5
+    '12': 0.18.0
+    '13': linux-x86_64
+  cli_version: 0.18.0
+  python_version: 3.10.14
+trainer:
+  accelerator: gpu
+  max_epochs: 50
+  num_sanity_val_steps: 2
+  overfit_batches: 0.0
+  log_every_n_steps: 10
+  gradient_clip_val: 10.0
+  gradient_clip_algorithm: norm
+  val_check_interval: 1.0
+  accumulate_grad_batches: 1
+  reload_dataloaders_every_n_epochs: 0
+datasets:
+  train:
+  - name: Train
+    metadata_path: /hadatasets/alef.ferreira/SER/Interspeech/InterSpeech-SER-2025/Dataset/transcribed_canary_train_set.csv
+    base_dir: /hadatasets/alef.ferreira/SER/Interspeech/Audios
+    audio_base_dir: /hadatasets/alef.ferreira/SER/Interspeech/whisper-large-v3-v2
+    text_base_dir: /hadatasets/alef.ferreira/SER/Interspeech/Texts_E5_last_layer
+    f0_base_dir: /hadatasets/alef.ferreira/SER/Interspeech/pitch_rmvpe
+    filename_column: FileName
+    target_column: EmoClass
+  val:
+  - name: Validation
+    metadata_path: /hadatasets/alef.ferreira/SER/Interspeech/InterSpeech-SER-2025/Dataset/transcribed_canary_complete_dev.csv
+    base_dir: /hadatasets/alef.ferreira/SER/Interspeech/Audios
+    audio_base_dir: /hadatasets/alef.ferreira/SER/Interspeech/whisper-large-v3-v2
+    text_base_dir: /hadatasets/alef.ferreira/SER/Interspeech/Texts_E5_last_layer
+    f0_base_dir: /hadatasets/alef.ferreira/SER/Interspeech/pitch_rmvpe
+    filename_column: FileName
+    target_column: EmoClass
+optimizer:
+  name: adamw
+  params:
+    min_learning_rate: 1.0e-05
+    learning_rate: 5.0e-05
+    eps: 1.0e-08
+    weight_decay: 1.0e-06
+    betas:
+    - 0.9
+    - 0.98
+scheduler:
+  name: CosineWarmupLR
+  params:
+    warmup_lr: 500
+wandb_entity: alefiury
+model_checkpoint:
+  mode: max
+  save_last: true
+  save_weights_only: true
+  monitor: val/f1-score
+  filename: '{epoch:02d}-{val/f1-score:.4f}'

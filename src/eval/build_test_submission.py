@@ -306,7 +306,7 @@ def main() -> None:
 
     print(df_submission["EmoClass"].value_counts())
 
-    df_submission.to_csv("/hadatasets/alef.ferreira/SER/Interspeech/submission-bimodal-ambjo5o9.csv", index=False)
+    df_submission.to_csv("/hadatasets/alef.ferreira/SER/Interspeech/submission-bimodal-3g3ovnq4-submission2.csv", index=False)
 
 
 

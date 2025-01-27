@@ -1,4 +1,5 @@
 import os
+import math
 import random
 from typing import List, Tuple, Dict, Optional
 
@@ -9,6 +10,7 @@ import pandas as pd
 import nlpaug.augmenter.word as naw
 from torch.utils.data import Dataset
 from transformers import WhisperFeatureExtractor
+from torch.nn.utils.rnn import pad_sequence
 from torch_audiomentations import AddBackgroundNoise, ApplyImpulseResponse, Identity
 
 
@@ -201,6 +203,8 @@ class LastLayerEmbeddingDataset(Dataset):
         Dict[torch.Tensor, np.ndarray]: A dictionary containing the audio and the caption
         """
         filename = self.filenames[index]
+        if filename.endswith(".wav"):
+            filename = filename[:-4] + ".pt"
         filepath = os.path.join(self.base_dir, filename)
 
         target = self.targets[index]
@@ -252,6 +256,7 @@ class DynamicDataset(Dataset):
         base_dir: str,
         filename_column: str,
         target_column: str,
+        gender_column: str = "Gender",
         class_num: int = 15,
         target_sr: int = 16000,
         data_type: str = "train",
@@ -278,6 +283,7 @@ class DynamicDataset(Dataset):
         # Cache filepaths and targets
         self.filenames = self.data[filename_column].values
         self.targets = self.data[target_column].values
+        # self.genders = self.data[gender_column].values
 
         self.filename_column = filename_column
         self.target_column = target_column
@@ -411,7 +417,11 @@ class DynamicDataset(Dataset):
         audio = self.background_noise(audio.unsqueeze(0)).squeeze(0)
         # Impulse response (Reverberation) or Identity
         audio = self.impulse_response(audio.unsqueeze(0)).squeeze(0)
-        return audio.squeeze(0).numpy(), target
+
+        # gender
+        genders = self.genders[index]
+
+        return audio.squeeze(0).numpy(), genders, target
 
 
 class DynamicCollate:
@@ -434,10 +444,11 @@ class DynamicCollate:
         self.padding_value = padding_value
 
     def __call__(self, batch: List[Tuple[torch.Tensor, torch.Tensor]]) -> Tuple[torch.Tensor, Optional[torch.Tensor], torch.Tensor]:
-        audios, targets = zip(*batch)
+        audios, genders, targets = zip(*batch)
 
         audios = list(audios)
         targets = torch.stack([t if isinstance(t, torch.Tensor) else torch.tensor(t) for t in targets])
+        genders = torch.stack([g if isinstance(g, torch.Tensor) else torch.tensor(g) for g in genders])
 
         processed = self.processor(
             audios,
@@ -454,7 +465,7 @@ class DynamicCollate:
                 sampling_rate=self.target_sr,
             )
 
-        return processed, targets
+        return (processed, genders), targets
 
 
 class DynamicAudioTextDataset(DynamicDataset):
@@ -536,7 +547,10 @@ class DynamicAudioTextDataset(DynamicDataset):
         # Impulse response (Reverberation) or Identity
         audio = self.impulse_response(audio.unsqueeze(0)).squeeze(0)
 
-        return audio.squeeze(0).numpy(), transcript, target
+        # gender
+        genders = self.genders[index]
+
+        return audio.squeeze(0).numpy(), transcript, genders, target
 
 
 class DynamicAudioTextCollate:
@@ -561,10 +575,11 @@ class DynamicAudioTextCollate:
         self.padding_value = padding_value
 
     def __call__(self, batch: List[Tuple[torch.Tensor, torch.Tensor]]) -> Tuple[torch.Tensor, Optional[torch.Tensor], torch.Tensor]:
-        audios, transcripts, targets = zip(*batch)
+        audios, transcripts, genders, targets = zip(*batch)
 
         audios = list(audios)
         targets = torch.stack([t if isinstance(t, torch.Tensor) else torch.tensor(t) for t in targets])
+        genders = torch.stack([g if isinstance(g, torch.Tensor) else torch.tensor(g) for g in genders])
 
         processed = self.processor(
             audios,
@@ -589,7 +604,7 @@ class DynamicAudioTextCollate:
                 sampling_rate=self.target_sr,
             )
 
-        return (processed, tokenized_transcripts), targets
+        return (processed, tokenized_transcripts, genders), targets
 
 
 class DynamicAudioTextSpeakerEmbDataset(DynamicDataset):
@@ -677,7 +692,10 @@ class DynamicAudioTextSpeakerEmbDataset(DynamicDataset):
         # Impulse response (Reverberation) or Identity
         audio = self.impulse_response(audio.unsqueeze(0)).squeeze(0)
 
-        return audio.squeeze(0).numpy(), transcript, speaker_emb, target
+        # gender
+        genders = self.genders[index]
+
+        return audio.squeeze(0).numpy(), transcript, speaker_emb, genders, target
 
 
 class DynamicAudioTextSpeakerEmbCollate:
@@ -702,12 +720,12 @@ class DynamicAudioTextSpeakerEmbCollate:
         self.padding_value = padding_value
 
     def __call__(self, batch: List[Tuple[torch.Tensor, torch.Tensor]]) -> Tuple[torch.Tensor, Optional[torch.Tensor], torch.Tensor]:
-        audios, transcripts, speaker_embs, targets = zip(*batch)
+        audios, transcripts, speaker_embs, genders, targets = zip(*batch)
 
         audios = list(audios)
         targets = torch.stack([t if isinstance(t, torch.Tensor) else torch.tensor(t) for t in targets])
-
         speaker_embs = torch.stack([t if isinstance(t, torch.Tensor) else torch.tensor(t) for t in speaker_embs])
+        genders = torch.stack([g if isinstance(g, torch.Tensor) else torch.tensor(g) for g in genders])
 
         processed = self.processor(
             audios,
@@ -742,7 +760,7 @@ class DynamicAudioTextSpeakerEmbCollate:
 
             processed["wavs"] = padded_audios
 
-        return (processed, tokenized_transcripts, speaker_embs), targets
+        return (processed, tokenized_transcripts, speaker_embs, genders), targets
 
 
 class XEUSNestCollate:
@@ -879,3 +897,1168 @@ class XEUSNestTextSpeakerEmbCollate:
         speaker_embs = torch.stack([t if isinstance(t, torch.Tensor) else torch.tensor(t) for t in speaker_embs])
 
         return (processed, tokenized_transcripts, speaker_embs), targets
+
+
+class LastLayerEmbeddingTextDataset(Dataset):
+    def __init__(
+        self,
+        data: pd.DataFrame,
+        filename_column: str,
+        target_column: str,
+        gender_column: str,
+        transcript_column: str,
+        base_dir: str,
+        data_type: str = "val",
+        # text augmentation parameters (Optional)
+        use_text_augmentation: Optional[bool] = False,
+        text_augmentation_p: Optional[float] = 0.5,
+        # SeqAug parameters (Optional)
+        use_seqaug: Optional[bool] = False,
+        seqaug_alpha: Optional[float] = 0.5,
+        seqaug_p: Optional[float] = 0.5,
+    ):
+        """Initialization"""
+        self.data = data
+
+        # Cache filepaths and targets
+        self.filenames = self.data[filename_column].values
+        self.targets = self.data[target_column].values
+        self.genders = self.data[gender_column].values
+
+        self.filename_column = filename_column
+        self.target_column = target_column
+
+        self.base_dir = base_dir
+
+        self.transcripts = self.data[transcript_column].values
+        self.use_text_augmentation = use_text_augmentation
+        # Text augmentation
+        if self.use_text_augmentation:
+            self.text_augmenter = naw.RandomWordAug()
+            self.text_augmentation_p = text_augmentation_p
+
+        # SeqAug
+        self.use_seqaug = use_seqaug
+        if self.use_seqaug:
+            self.seqaug_alpha = seqaug_alpha
+            self.seqaug_p = seqaug_p
+
+        self.data_type = data_type
+
+    def __len__(self):
+        return len(self.data)
+
+    def seqaug(self, features: torch.Tensor) -> torch.Tensor:
+        """
+        Applies SeqAug (https://arxiv.org/abs/2305.01954) augmentation to the input tensor.
+
+        Params:
+            features (torch.Tensor): Input tensor of shape [sequence_length, feature_size].
+
+        Returns:
+            output_tensor (torch.Tensor): Augmented tensor of the same shape as input_tensor.
+        """
+        # Remove leading channel/batch dimension => shape [T, F]
+        features_squeezed = features.squeeze(0)
+        T, F = features_squeezed.shape
+
+        dist = torch.distributions.beta.Beta(self.seqaug_alpha, self.seqaug_alpha)
+        fraction = dist.sample().item()  # fraction in [0, 1]
+
+        num_to_permute = int(fraction * F)
+        addresses = random.sample(range(F), num_to_permute) if num_to_permute > 0 else []
+
+        time_perm = torch.randperm(T)
+
+        augmented = features_squeezed.clone()
+        for addr in addresses:
+            augmented[:, addr] = features_squeezed[time_perm, addr]
+
+        return augmented.unsqueeze(0)  # shape => [1, T, F]
+
+    def _load_file(self, filepath: str) -> torch.Tensor:
+        """Load an audio file
+
+        Params:
+
+        filepath (str): Path to the audio file
+
+        Returns:
+
+        torch.Tensor: Audio tensor
+        """
+        features = torch.load(filepath)
+        return features
+
+    def __getitem__(self, index: int) -> Tuple[torch.Tensor, List[str]]:
+        """Get an item from the dataset
+
+        Params:
+
+        index (int): Index of the item to get
+
+        Returns:
+
+        Dict[torch.Tensor, np.ndarray]: A dictionary containing the audio and the caption
+        """
+        filename = self.filenames[index]
+        if filename.endswith(".wav"):
+            filename = filename[:-4] + ".pt"
+        filepath = os.path.join(self.base_dir, filename)
+
+        target = self.targets[index]
+        transcript = self.transcripts[index]
+
+        # Apply text augmentation
+        if self.use_text_augmentation and random.random() < self.text_augmentation_p and self.data_type == "train":
+            transcript = self.text_augmenter.augment(transcript)[0]
+
+        features = self._load_file(filepath)
+
+        # Convert features to float
+        features = features.float()
+
+        if self.use_seqaug and random.random() < self.seqaug_p and self.data_type == "train":
+            features = self.seqaug(features)
+
+        genders = self.genders[index]
+
+        return features, transcript, genders, target
+
+
+class LastLayerEmbeddingTextCollate:
+    def __init__(
+        self,
+        padding_value: float = 0.0,
+        text_tokenizer = None,
+    ):
+        self.text_tokenizer = text_tokenizer
+        self.padding_value = padding_value
+
+    def __call__(
+        self,
+        batch: List[Tuple[torch.Tensor, torch.Tensor]]
+    ) -> Tuple[torch.Tensor, Optional[torch.Tensor]]:
+
+        features, transcripts, genders, targets = zip(*batch)
+        targets = torch.stack([torch.as_tensor(t) for t in targets])
+        genders = torch.stack([torch.as_tensor(g) for g in genders])
+
+        processed_features = []
+        for feature in features:
+            # Only check and fix shape if it's (1, T, F)
+            if feature.dim() == 3 and feature.shape[0] == 1:
+                feature = feature.squeeze(0)  # (T, F)
+            processed_features.append(feature)
+
+        features = processed_features
+        lengths = [f.shape[0] for f in features]
+        max_length = max(lengths)
+
+        feature_dim = features[0].shape[-1]
+
+        padded_features = torch.full((len(features), max_length, feature_dim), self.padding_value)
+        for i, f in enumerate(features):
+            padded_features[i, :f.shape[0]] = f
+
+        tokenized_transcripts = self.text_tokenizer(
+            transcripts,
+            padding=True,
+            truncation=True,
+            max_length=512,
+            return_tensors="pt"
+        )
+
+        return (padded_features, tokenized_transcripts, genders), targets
+
+
+class LastLayerEmbeddingTextMelSpecDataset(LastLayerEmbeddingTextDataset):
+    def __init__(
+        self,
+        target_sr: int = 16000,
+        audio_base_dir: str = None,
+        # Random truncation parameters (Optional)
+        use_rand_truncation: Optional[bool] = False,
+        min_duration: Optional[float] = 0.0,
+        # background noise parameters (Optional)
+        use_background_noise: Optional[bool] = False,
+        background_noise_dir: Optional[str] = None,
+        background_noise_min_snr_in_db: Optional[float] = 3.0,
+        background_noise_max_snr_in_db: Optional[float] = 15.0,
+        background_noise_p: Optional[float] = 0.5,
+        # impulse response parameters (Optional)
+        use_rir: Optional[bool] = False,
+        rir_dir: Optional[str] = None,
+        rir_p: Optional[float] = 0.5,
+        **kwargs,
+    ):
+        super().__init__(**kwargs)
+        """Initialization"""
+        self.audio_base_dir = audio_base_dir
+        self.target_sr = target_sr
+
+        # Data augmentation parameters
+        # Random truncation
+        self.use_rand_truncation = use_rand_truncation
+        self.min_duration = min_duration
+        # Background noise
+        self.use_background_noise = use_background_noise
+        if self.use_background_noise:
+            self.background_noise = AddBackgroundNoise(
+                background_paths=background_noise_dir,
+                min_snr_in_db=background_noise_min_snr_in_db,
+                max_snr_in_db=background_noise_max_snr_in_db,
+                sample_rate=target_sr,
+                target_rate=target_sr,
+                p=background_noise_p
+            )
+        else:
+            # Identity augmentation if not using background noise
+            self.background_noise = Identity()
+
+        # Impulse response
+        self.use_rir = use_rir
+        if self.use_rir:
+            self.impulse_response = ApplyImpulseResponse(
+                ir_paths=rir_dir,
+                sample_rate=target_sr,
+                target_rate=target_sr,
+                p=rir_p,
+            )
+        else:
+            # Identity augmentation if not using impulse response
+            self.impulse_response = Identity()
+
+        # Cache for sampling rate resamplers
+        self.resamplers = {}
+
+
+    def _random_truncation(self, audio: torch.Tensor) -> torch.Tensor:
+        """
+        Cut or pad an audio tensor to the desired length.
+        """
+        min_length = int(self.min_duration * self.target_sr)
+        len_audio = audio.shape[-1]
+
+        if self.use_rand_truncation and len_audio > min_length and random.random() < 0.5:
+            segment_length = random.randint(min_length, len_audio)
+
+            max_start = len_audio - segment_length
+            start = random.randint(0, max_start)
+            end = start + segment_length
+
+            audio = audio[..., start:end]
+
+        return audio
+
+    def _load_wav(self, filepath: str):
+        waveform, source_sr = torchaudio.load(filepath)
+
+        # Convert to mono if stereo
+        if waveform.dim() == 2 and waveform.shape[0] > 1:
+            waveform = waveform.mean(dim=0, keepdim=True)
+
+        # Resample if needed
+        if source_sr != self.target_sr:
+            if source_sr not in self.resamplers:
+                self.resamplers[source_sr] = torchaudio.transforms.Resample(orig_freq=source_sr, new_freq=self.target_sr)
+            waveform = self.resamplers[source_sr](waveform)
+
+        return waveform, self.target_sr
+
+    def __getitem__(self, index: int) -> Dict[torch.Tensor, torch.Tensor]:
+        filename = self.filenames[index]
+        if filename.endswith(".wav"):
+            feature_filename = filename[:-4] + ".pt"
+        else:
+            feature_filename = filename
+        filepath = os.path.join(self.base_dir, feature_filename)
+
+        target = self.targets[index]
+        transcript = self.transcripts[index]
+
+        # Apply text augmentation
+        if self.use_text_augmentation and self.data_type == "train" and random.random() < self.text_augmentation_p:
+            transcript = self.text_augmenter.augment(transcript)[0]
+
+        features = self._load_file(filepath)
+
+        # Convert features to float
+        features = features.float()
+
+        audio, _ = self._load_wav(os.path.join(self.audio_base_dir, filename))
+        # Random Truncation
+        if self.use_rand_truncation and self.data_type == "train":
+            audio = self._random_truncation(audio)
+
+        if self.data_type == "train":
+            # Background noise insertion or Identity
+            audio = self.background_noise(audio.unsqueeze(0)).squeeze(0)
+            # Impulse response (Reverberation) or Identity
+            audio = self.impulse_response(audio.unsqueeze(0)).squeeze(0)
+
+        genders = self.genders[index]
+
+        return features, transcript, genders, audio, target
+
+
+class LastLayerEmbeddingTextMelSpecCollate:
+    def __init__(
+        self,
+        padding_value: float = 0.0,
+        text_tokenizer = None,
+    ):
+        self.text_tokenizer = text_tokenizer
+        self.padding_value = padding_value
+
+    def __call__(
+        self,
+        batch: List[Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]]
+    ) -> Tuple[torch.Tensor, Optional[torch.Tensor]]:
+
+        features, transcripts, genders, audios, targets = zip(*batch)
+        targets = torch.stack([torch.as_tensor(t) for t in targets])
+
+        genders = torch.stack([torch.as_tensor(g) for g in genders])
+
+        processed_features = []
+        for feature in features:
+            # Only check and fix shape if it's (1, T, F)
+            if feature.dim() == 3 and feature.shape[0] == 1:
+                feature = feature.squeeze(0)  # (T, F)
+            processed_features.append(feature)
+
+        features = processed_features
+        lengths = [f.shape[0] for f in features]
+        max_length = max(lengths)
+
+        feature_dim = features[0].shape[-1]
+
+        padded_features = torch.full((len(features), max_length, feature_dim), self.padding_value)
+        for i, f in enumerate(features):
+            padded_features[i, :f.shape[0]] = f
+
+        tokenized_transcripts = self.text_tokenizer(
+            transcripts,
+            padding=True,
+            truncation=True,
+            max_length=512,
+            return_tensors="pt"
+        )
+
+        # pad audios ana take the length
+        audios_lengths = [audio.shape[-1] for audio in audios]
+        # pad audios
+        max_length = max(audios_lengths)
+
+        padded_audios = torch.full((len(audios), max_length), self.padding_value)
+
+        for i, audio in enumerate(audios):
+            padded_audios[i, :audio.shape[-1]] = audio.float()
+
+        return (padded_features, tokenized_transcripts, genders, padded_audios), targets
+
+
+class BimodalEmbeddingDataset(Dataset):
+    def __init__(
+        self,
+        data: pd.DataFrame,
+        filename_column: str,
+        target_column: str,
+        audio_base_dir: str,
+        text_base_dir: str,
+        data_type: str = "val",
+        # SeqAug parameters (Optional)
+        use_seqaug: Optional[bool] = False,
+        seqaug_alpha: Optional[float] = 0.5,
+        seqaug_p: Optional[float] = 0.5,
+        # mixup parameters (Optional)
+        mixup_alpha: Optional[float] = 0.0,
+        class_num: Optional[int] = 8,
+    ):
+        """Initialization"""
+        self.data = data
+
+        # Cache filepaths and targets
+        self.filenames = self.data[filename_column].values
+        self.targets = self.data[target_column].values
+
+        self.filename_column = filename_column
+        self.target_column = target_column
+
+        self.audio_base_dir = audio_base_dir
+        self.text_base_dir = text_base_dir
+
+        # SeqAug
+        self.use_seqaug = use_seqaug
+        if self.use_seqaug:
+            print("Using SeqAug!!!")
+            self.seqaug_alpha = seqaug_alpha
+            self.seqaug_p = seqaug_p
+
+        # Mixup
+        self.mixup_alpha = mixup_alpha
+
+        self.data_type = data_type
+
+        self.class_num = class_num
+
+    def __len__(self):
+        return len(self.data)
+
+    def seqaug(self, features: torch.Tensor) -> torch.Tensor:
+        """
+        Applies SeqAug (https://arxiv.org/abs/2305.01954) augmentation to the input tensor.
+
+        Params:
+            features (torch.Tensor): Input tensor of shape [sequence_length, feature_size].
+
+        Returns:
+            output_tensor (torch.Tensor): Augmented tensor of the same shape as input_tensor.
+        """
+        # Remove leading channel/batch dimension => shape [T, F]
+        features_squeezed = features.squeeze(0)
+        T, F = features_squeezed.shape
+
+        dist = torch.distributions.beta.Beta(self.seqaug_alpha, self.seqaug_alpha)
+        fraction = dist.sample().item()  # fraction in [0, 1]
+
+        num_to_permute = int(fraction * F)
+        addresses = random.sample(range(F), num_to_permute) if num_to_permute > 0 else []
+
+        time_perm = torch.randperm(T)
+
+        augmented = features_squeezed.clone()
+        for addr in addresses:
+            augmented[:, addr] = features_squeezed[time_perm, addr]
+
+        return augmented.unsqueeze(0)  # shape => [1, T, F]
+
+    def _apply_mixup(self, original_index: int) -> Tuple[int, int]:
+        """Apply mixup to the dataset
+
+        Params:
+
+        original_index (int): Index of the original item
+
+        Returns:
+
+        Tuple[int, int]: Index of the original item and the index of the item to mix with
+        """
+        main_target = self.targets[original_index]
+        main_file = self.filenames[original_index]
+
+        if main_file.endswith(".wav"):
+            main_file = main_file[:-4] + ".pt"
+
+        unique_targets = np.unique(self.targets)
+
+        # Randomly select a different target, remove the main target
+        unique_targets = unique_targets[unique_targets != main_target]
+        rand_target = np.random.choice(unique_targets)
+
+        # Randomly select an item with the same target
+        rand_index = np.random.choice(np.where(self.targets == rand_target)[0])
+
+        # Sanity check
+        assert self.targets[rand_index] == rand_target
+
+        # load features
+        rand_file = self.filenames[rand_index]
+
+        if rand_file.endswith(".wav"):
+            rand_file = rand_file[:-4] + ".pt"
+
+        original_path = os.path.join(self.audio_base_dir, main_file)
+        rand_path = os.path.join(self.audio_base_dir, rand_file)
+
+        audio_original = torch.load(original_path)
+        audio_rand = torch.load(rand_path)
+
+        text_original = torch.load(os.path.join(self.text_base_dir, main_file))
+        text_rand = torch.load(os.path.join(self.text_base_dir, rand_file))
+
+        # Sample lambda from beta distribution
+        mix_lambda = np.random.beta(self.mixup_alpha, self.mixup_alpha)
+
+        audio_original = audio_original.squeeze(0)
+        audio_rand = audio_rand.squeeze(0)
+
+        text_original = text_original.squeeze(0)
+        text_rand = text_rand.squeeze(0)
+
+        if audio_original.shape[0] > audio_rand.shape[0]:
+            padding = audio_original.shape[0] - audio_rand.shape[0]
+            # (left_pad, right_pad, top_pad, bottom_pad) for 2D
+            # We only pad at the 'bottom' (the end of the first dimension).
+            audio_rand = torch.nn.functional.pad(audio_rand, (0, 0, 0, padding), mode='constant', value=0)
+        elif audio_rand.shape[0] > audio_original.shape[0]:
+            padding = audio_rand.shape[0] - audio_original.shape[0]
+            audio_original = torch.nn.functional.pad(audio_original, (0, 0, 0, padding), mode='constant', value=0)
+
+        if text_original.shape[0] > text_rand.shape[0]:
+            padding = text_original.shape[0] - text_rand.shape[0]
+            text_rand = torch.nn.functional.pad(text_rand, (0, 0, 0, padding), mode='constant', value=0)
+        elif text_rand.shape[0] > text_original.shape[0]:
+            padding = text_rand.shape[0] - text_original.shape[0]
+            text_original = torch.nn.functional.pad(text_original, (0, 0, 0, padding), mode='constant', value=0)
+
+        # Mixup
+        audio = mix_lambda * audio_original + (1 - mix_lambda) * audio_rand
+        text = mix_lambda * text_original + (1 - mix_lambda) * text_rand
+
+        # When using mixup we need to use one-hot encoding for the target
+        target = torch.zeros(self.class_num)
+        target[main_target] = mix_lambda
+        target[rand_target] = 1 - mix_lambda
+
+        return audio, text, target
+
+
+    def _load_file(self, filepath: str) -> torch.Tensor:
+        """Load an audio file
+
+        Params:
+
+        filepath (str): Path to the audio file
+
+        Returns:
+
+        torch.Tensor: Audio tensor
+        """
+        features = torch.load(filepath)
+        return features
+
+    def __getitem__(self, index: int) -> Tuple[torch.Tensor, List[str]]:
+        """Get an item from the dataset
+
+        Params:
+
+        index (int): Index of the item to get
+
+        Returns:
+
+        Dict[torch.Tensor, np.ndarray]: A dictionary containing the audio and the caption
+        """
+        filename = self.filenames[index]
+        target = self.targets[index]
+
+        if filename.endswith(".wav"):
+            filename = filename[:-4] + ".pt"
+
+        audio_filepath = os.path.join(self.audio_base_dir, filename)
+        text_filepath = os.path.join(self.text_base_dir, filename)
+
+        audio_features = self._load_file(audio_filepath)
+        text_features = self._load_file(text_filepath)
+
+        # Mixup
+        if self.mixup_alpha > 0.0 and self.data_type == "train":
+            if random.random() < self.mixup_alpha:
+                audio_features, text_features, target = self._apply_mixup(index)
+            else:
+                hot_target = torch.zeros(self.class_num)
+                hot_target[target] = 1.0
+                target = hot_target
+        elif self.mixup_alpha > 0.0 and self.data_type != "train":
+            hot_target = torch.zeros(self.class_num)
+            hot_target[target] = 1.0
+            target = hot_target
+
+        # SeqAug
+        if self.use_seqaug and random.random() < self.seqaug_p and self.data_type == "train":
+            audio_features = self.seqaug(audio_features)
+        if self.use_seqaug and random.random() < self.seqaug_p and self.data_type == "train":
+            text_features = self.seqaug(text_features)
+
+        return audio_features.squeeze(0), text_features.squeeze(0), target
+
+
+class BimodalEmbeddingCollate:
+    def __init__(
+        self,
+        padding_value: float = 0.0,
+    ):
+        self.padding_value = padding_value
+
+    def __call__(
+        self,
+        batch: List[Tuple[torch.Tensor, torch.Tensor]]
+    ) -> Tuple[torch.Tensor, Optional[torch.Tensor]]:
+
+        audio_features, text_features, targets = zip(*batch)
+        targets = torch.stack([torch.as_tensor(t) for t in targets])
+
+        # Pad audio and text features
+        padded_audio_features = pad_sequence(
+            audio_features,
+            batch_first=True,
+            padding_value=self.padding_value
+        )  # Shape: [batch_size, max_audio_length, feature_size]
+
+        padded_text_features = pad_sequence(
+            text_features,
+            batch_first=True,
+            padding_value=self.padding_value
+        )  # Shape: [batch_size, max_text_length, feature_size]
+
+        return (padded_audio_features, padded_text_features), targets
+
+
+class BimodalEmbeddingMelSpecDataset(Dataset):
+    def __init__(
+        self,
+        data: pd.DataFrame,
+        filename_column: str,
+        target_column: str,
+        base_dir: str,
+        audio_base_dir: str,
+        text_base_dir: str,
+        data_type: str = "val",
+        target_sr: int = 16000,
+        # Random truncation parameters (Optional)
+        use_rand_truncation: Optional[bool] = False,
+        min_duration: Optional[float] = 0.0,
+        # SeqAug parameters (Optional)
+        use_seqaug: Optional[bool] = False,
+        seqaug_alpha: Optional[float] = 0.5,
+        seqaug_p: Optional[float] = 0.5,
+    ):
+        """Initialization"""
+        self.data = data
+
+        # Cache filepaths and targets
+        self.filenames = self.data[filename_column].values
+        self.targets = self.data[target_column].values
+
+        self.filename_column = filename_column
+        self.target_column = target_column
+
+        self.base_dir = base_dir
+        self.audio_base_dir = audio_base_dir
+        self.text_base_dir = text_base_dir
+
+        self.resamplers = {}
+
+        self.target_sr = target_sr
+
+        # Random truncation parameters
+        self.use_rand_truncation = use_rand_truncation
+        self.min_duration = min_duration
+
+        # SeqAug
+        self.use_seqaug = use_seqaug
+        if self.use_seqaug:
+            self.seqaug_alpha = seqaug_alpha
+            self.seqaug_p = seqaug_p
+
+        self.data_type = data_type
+
+    def __len__(self):
+        return len(self.data)
+
+    def seqaug(self, features: torch.Tensor) -> torch.Tensor:
+        """
+        Applies SeqAug (https://arxiv.org/abs/2305.01954) augmentation to the input tensor.
+
+        Params:
+            features (torch.Tensor): Input tensor of shape [sequence_length, feature_size].
+
+        Returns:
+            output_tensor (torch.Tensor): Augmented tensor of the same shape as input_tensor.
+        """
+        # Remove leading channel/batch dimension => shape [T, F]
+        features_squeezed = features.squeeze(0)
+        T, F = features_squeezed.shape
+
+        dist = torch.distributions.beta.Beta(self.seqaug_alpha, self.seqaug_alpha)
+        fraction = dist.sample().item()  # fraction in [0, 1]
+
+        num_to_permute = int(fraction * F)
+        addresses = random.sample(range(F), num_to_permute) if num_to_permute > 0 else []
+
+        time_perm = torch.randperm(T)
+
+        augmented = features_squeezed.clone()
+        for addr in addresses:
+            augmented[:, addr] = features_squeezed[time_perm, addr]
+
+        return augmented.unsqueeze(0)  # shape => [1, T, F]
+
+    def _load_file(self, filepath: str) -> torch.Tensor:
+        """Load an audio file
+
+        Params:
+
+        filepath (str): Path to the audio file
+
+        Returns:
+
+        torch.Tensor: Audio tensor
+        """
+        features = torch.load(filepath)
+        return features
+
+    def _random_truncation(self, audio: torch.Tensor) -> torch.Tensor:
+        """
+        Cut or pad an audio tensor to the desired length.
+        """
+        min_length = int(self.min_duration * self.target_sr)
+        len_audio = audio.shape[-1]
+
+        if self.use_rand_truncation and len_audio > min_length and random.random() < 0.5:
+            segment_length = random.randint(min_length, len_audio)
+
+            max_start = len_audio - segment_length
+            start = random.randint(0, max_start)
+            end = start + segment_length
+
+            audio = audio[..., start:end]
+
+        return audio
+
+    def _load_wav(self, filepath: str):
+        waveform, source_sr = torchaudio.load(filepath)
+
+        # Convert to mono if stereo
+        if waveform.dim() == 2 and waveform.shape[0] > 1:
+            waveform = waveform.mean(dim=0, keepdim=True)
+
+        # Resample if needed
+        if source_sr != self.target_sr:
+            if source_sr not in self.resamplers:
+                self.resamplers[source_sr] = torchaudio.transforms.Resample(orig_freq=source_sr, new_freq=self.target_sr)
+            waveform = self.resamplers[source_sr](waveform)
+
+        return waveform, self.target_sr
+
+    def __getitem__(self, index: int) -> Tuple[torch.Tensor, List[str]]:
+        """Get an item from the dataset
+
+        Params:
+
+        index (int): Index of the item to get
+
+        Returns:
+
+        Dict[torch.Tensor, np.ndarray]: A dictionary containing the audio and the caption
+        """
+        filename = self.filenames[index]
+        target = self.targets[index]
+
+        if filename.endswith(".wav"):
+            feature_filename = filename[:-4] + ".pt"
+
+        audio_filepath = os.path.join(self.audio_base_dir, feature_filename)
+        text_filepath = os.path.join(self.text_base_dir, feature_filename)
+
+        # Features
+        audio_features = self._load_file(audio_filepath)
+        text_features = self._load_file(text_filepath)
+
+        # Audio
+        audio, _ = self._load_wav(os.path.join(self.base_dir, filename))
+        # Random Truncation
+        if self.use_rand_truncation and self.data_type == "train":
+            audio = self._random_truncation(audio)
+
+        # SeqAug
+        if self.use_seqaug and random.random() < self.seqaug_p and self.data_type == "train":
+            audio_features = self.seqaug(audio_features)
+        if self.use_seqaug and random.random() < self.seqaug_p and self.data_type == "train":
+            text_features = self.seqaug(text_features)
+
+        return audio_features.squeeze(0), text_features.squeeze(0), audio, target
+
+
+class BimodalEmbeddingMelSpecCollate:
+    def __init__(
+        self,
+        padding_value: float = 0.0,
+    ):
+        self.padding_value = padding_value
+
+    def __call__(
+        self,
+        batch: List[Tuple[torch.Tensor, torch.Tensor, torch.Tensor]]
+    ) -> Tuple[torch.Tensor, Optional[torch.Tensor]]:
+
+        audio_features, text_features, audios, targets = zip(*batch)
+        targets = torch.stack([torch.as_tensor(t) for t in targets])
+
+        # Pad audio and text features
+        padded_audio_features = pad_sequence(
+            audio_features,
+            batch_first=True,
+            padding_value=self.padding_value
+        )  # Shape: [batch_size, max_audio_length, feature_size]
+
+        padded_text_features = pad_sequence(
+            text_features,
+            batch_first=True,
+            padding_value=self.padding_value
+        )  # Shape: [batch_size, max_text_length, feature_size]
+
+        # pad audios ana take the length
+        audios_lengths = [audio.shape[-1] for audio in audios]
+        # pad audios
+        max_length = max(audios_lengths)
+
+        padded_audios = torch.full((len(audios), max_length), self.padding_value)
+
+        for i, audio in enumerate(audios):
+            padded_audios[i, :audio.shape[-1]] = audio.float()
+
+        return (padded_audio_features, padded_text_features, padded_audios), targets
+
+
+class BimodalEmbeddingF0Dataset(BimodalEmbeddingDataset):
+    def __init__(
+        self,
+        f0_base_dir: str,
+        **kwargs,
+    ):
+        super().__init__(**kwargs)
+        """Initialization"""
+        self.f0_base_dir = f0_base_dir
+
+    def __len__(self):
+        return len(self.data)
+
+    def __getitem__(self, index: int) -> Tuple[torch.Tensor, List[str]]:
+        """Get an item from the dataset
+
+        Params:
+
+        index (int): Index of the item to get
+
+        Returns:
+
+        Dict[torch.Tensor, np.ndarray]: A dictionary containing the audio and the caption
+        """
+        filename = self.filenames[index]
+        target = self.targets[index]
+
+        if filename.endswith(".wav"):
+            filename = filename[:-4] + ".pt"
+
+        audio_filepath = os.path.join(self.audio_base_dir, filename)
+        text_filepath = os.path.join(self.text_base_dir, filename)
+        f0_filepath = os.path.join(self.f0_base_dir, filename)
+
+        audio_features = self._load_file(audio_filepath)
+        text_features = self._load_file(text_filepath)
+        f0_features = self._load_file(f0_filepath)
+
+        # SeqAug
+        if self.use_seqaug and random.random() < self.seqaug_p and self.data_type == "train":
+            audio_features = self.seqaug(audio_features)
+        if self.use_seqaug and random.random() < self.seqaug_p and self.data_type == "train":
+            text_features = self.seqaug(text_features)
+
+        return audio_features.squeeze(0), text_features.squeeze(0), f0_features.squeeze(0), target
+
+
+class BimodalEmbeddingF0Collate:
+    def __init__(
+        self,
+        padding_value: float = 0.0,
+    ):
+        self.padding_value = padding_value
+
+    def __call__(
+        self,
+        batch: List[Tuple[torch.Tensor, torch.Tensor, torch.Tensor]]
+    ) -> Tuple[torch.Tensor, Optional[torch.Tensor]]:
+
+        audio_features, text_features, f0_features, targets = zip(*batch)
+        targets = torch.stack([torch.as_tensor(t) for t in targets])
+
+        # Pad audio and text features
+        padded_audio_features = pad_sequence(
+            audio_features,
+            batch_first=True,
+            padding_value=self.padding_value
+        )  # Shape: [batch_size, max_audio_length, feature_size]
+
+        padded_text_features = pad_sequence(
+            text_features,
+            batch_first=True,
+            padding_value=self.padding_value
+        )  # Shape: [batch_size, max_text_length, feature_size]
+
+        padded_f0_features = pad_sequence(
+            f0_features,
+            batch_first=True,
+            padding_value=256
+        )  # Shape: [batch_size, max_f0_length, feature_size]
+
+        return (padded_audio_features, padded_text_features, padded_f0_features), targets
+
+
+class BimodalEmbeddingF0MelSpecDataset(BimodalEmbeddingMelSpecDataset):
+    def __init__(
+        self,
+        f0_base_dir: str,
+        **kwargs,
+    ):
+        super().__init__(**kwargs)
+        """Initialization"""
+        self.f0_base_dir = f0_base_dir
+
+    def __len__(self):
+        return len(self.data)
+
+    def __getitem__(self, index: int) -> Tuple[torch.Tensor, List[str]]:
+        """Get an item from the dataset
+
+        Params:
+
+        index (int): Index of the item to get
+
+        Returns:
+
+        Dict[torch.Tensor, np.ndarray]: A dictionary containing the audio and the caption
+        """
+        filename = self.filenames[index]
+        target = self.targets[index]
+
+        if filename.endswith(".wav"):
+            feature_filename = filename[:-4] + ".pt"
+
+        audio_filepath = os.path.join(self.audio_base_dir, feature_filename)
+        text_filepath = os.path.join(self.text_base_dir, feature_filename)
+        f0_filepath = os.path.join(self.f0_base_dir, feature_filename)
+
+        # Features
+        audio_features = self._load_file(audio_filepath)
+        text_features = self._load_file(text_filepath)
+        f0_features = self._load_file(f0_filepath)
+
+        # Audio
+        audio, _ = self._load_wav(os.path.join(self.base_dir, filename))
+        # Random Truncation
+        if self.use_rand_truncation and self.data_type == "train":
+            audio = self._random_truncation(audio)
+
+        # SeqAug
+        if self.use_seqaug and random.random() < self.seqaug_p and self.data_type == "train":
+            audio_features = self.seqaug(audio_features)
+        if self.use_seqaug and random.random() < self.seqaug_p and self.data_type == "train":
+            text_features = self.seqaug(text_features)
+
+        return audio_features.squeeze(0), text_features.squeeze(0), f0_features.squeeze(0), audio, target
+
+
+class BimodalEmbeddingF0MelSpecCollate:
+    def __init__(
+        self,
+        padding_value: float = 0.0,
+    ):
+        self.padding_value = padding_value
+
+    def __call__(
+        self,
+        batch: List[Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]]
+    ) -> Tuple[torch.Tensor, Optional[torch.Tensor]]:
+
+        audio_features, text_features, f0_features, audios, targets = zip(*batch)
+        targets = torch.stack([torch.as_tensor(t) for t in targets])
+
+        # Pad audio and text features
+        padded_audio_features = pad_sequence(
+            audio_features,
+            batch_first=True,
+            padding_value=self.padding_value
+        )  # Shape: [batch_size, max_audio_length, feature_size]
+
+        padded_text_features = pad_sequence(
+            text_features,
+            batch_first=True,
+            padding_value=self.padding_value
+        )  # Shape: [batch_size, max_text_length, feature_size]
+
+        padded_f0_features = pad_sequence(
+            f0_features,
+            batch_first=True,
+            padding_value=256
+        )  # Shape: [batch_size, max_f0_length, feature_size]
+
+        # pad audios ana take the length
+        audios_lengths = [audio.shape[-1] for audio in audios]
+        # pad audios
+        max_length = max(audios_lengths)
+
+        padded_audios = torch.full((len(audios), max_length), self.padding_value)
+
+        for i, audio in enumerate(audios):
+            padded_audios[i, :audio.shape[-1]] = audio.float()
+
+        return (padded_audio_features, padded_text_features, padded_f0_features, padded_audios), targets
+
+
+
+
+class DynamicAudioTextF0MelSpecDataset(DynamicDataset):
+    def __init__(
+        self,
+        f0_base_dir: str,
+        transcript_column: str,
+        # text augmentation parameters (Optional)
+        use_text_augmentation: Optional[bool] = False,
+        text_augmentation_p: Optional[float] = 0.5,
+        **kwargs,
+    ):
+        super().__init__(**kwargs)
+        """Initialization"""
+        self.f0_base_dir = f0_base_dir
+        self.transcripts = self.data[transcript_column].values
+        self.use_text_augmentation = use_text_augmentation
+        # Text augmentation
+        if self.use_text_augmentation:
+            self.text_augmenter = naw.RandomWordAug()
+            self.text_augmentation_p = text_augmentation_p
+
+    def __getitem__(self, index: int) -> Dict[torch.Tensor, torch.Tensor]:
+        main_target = self.targets[index]
+        main_file = self.filenames[index]
+        transcript = self.transcripts[index]
+
+        # Apply text augmentation
+        if self.use_text_augmentation and self.data_type == "train" and random.random() < self.text_augmentation_p:
+            transcript = self.text_augmenter.augment(transcript)[0]
+
+        # If using mixup and in training mode
+        if self.mixup_alpha > 0.0 and self.data_type == "train" and random.random() < self.mixup_alpha:
+            attempts = 0
+            rand_index = index
+            # Force mixup with a different targets, attempt limit is 10 to avoid infinite loop
+            while attempts < 10 and self.targets[rand_index] == main_target:
+                rand_index = random.randint(0, len(self.targets) - 1)
+                attempts += 1
+
+            rand_target = self.targets[rand_index]
+            rand_file = self.filenames[rand_index]
+
+            original_path = os.path.join(self.base_dir, main_file)
+            rand_path = os.path.join(self.base_dir, rand_file)
+
+            audio_original, _ = self._load_wav(original_path)
+            audio_rand, _ = self._load_wav(rand_path)
+
+            # Sample lambda from beta distribution
+            mix_lambda = np.random.beta(self.mixup_alpha, self.mixup_alpha)
+
+            # Audios must have the same length
+            if audio_original.shape[-1] > audio_rand.shape[-1]:
+                audio_rand = torch.nn.functional.pad(audio_rand, (0, audio_original.shape[-1] - audio_rand.shape[-1]))
+            elif audio_original.shape[-1] < audio_rand.shape[-1]:
+                audio_original = torch.nn.functional.pad(audio_original, (0, audio_rand.shape[-1] - audio_original.shape[-1]))
+
+            # Mixup
+            audio = mix_lambda * audio_original + (1 - mix_lambda) * audio_rand
+
+            # When using mixup we need to use one-hot encoding for the target
+            target = torch.zeros(self.class_num)
+            target[main_target] = mix_lambda
+            target[rand_target] = 1 - mix_lambda
+        else:
+            filepath = os.path.join(self.base_dir, main_file)
+            audio, _ = self._load_wav(filepath)
+            target = main_target
+
+        # One-hot encoding for the target if using mixup in eval mode (because we are using BCEWithLogitsLoss)
+        if self.mixup_alpha > 0.0 and self.data_type != "train":
+            target = torch.zeros(self.class_num)
+            target[main_target] = 1.0
+
+        # Random Truncation
+        if self.use_rand_truncation and self.data_type == "train":
+            audio = self._random_truncation(audio)
+        # Background noise insertion or Identity
+        audio = self.background_noise(audio.unsqueeze(0)).squeeze(0)
+        # Impulse response (Reverberation) or Identity
+        audio = self.impulse_response(audio.unsqueeze(0)).squeeze(0)
+
+        if main_file.endswith(".wav"):
+            feature_filename = main_file[:-4] + ".pt"
+        # F0
+        f0_features = torch.load(os.path.join(self.f0_base_dir, feature_filename))
+
+        return audio.squeeze(0).numpy(), transcript, f0_features, target
+
+
+class DynamicAudioTextF0MelSpecCollate:
+    def __init__(
+        self,
+        padding_value: float = 0.0,
+        processor = None,
+        text_tokenizer = None,
+        target_sr: int = 16000
+    ):
+        """
+        Collation function for dynamic batching of audio data.
+
+        Params:
+            padding_value (float): Value to use for padding shorter sequences.
+            processor: A processor or feature extractor to process raw audio
+                       into features if desired.
+        """
+        self.processor = processor
+        self.text_tokenizer = text_tokenizer
+        self.target_sr = target_sr
+        self.padding_value = padding_value
+
+    def __call__(self, batch: List[Tuple[torch.Tensor, torch.Tensor]]) -> Tuple[torch.Tensor, Optional[torch.Tensor], torch.Tensor]:
+        audios, transcripts, f0_features, targets = zip(*batch)
+
+        audios = list(audios)
+        targets = torch.stack([torch.as_tensor(t) for t in targets])
+
+        # Special case for Whisper, that expects a fixed input size of 3000 (30 seconds)
+        if isinstance(self.processor, WhisperFeatureExtractor):
+            processed = self.processor(
+                audios,
+                return_tensors="pt",
+                sampling_rate=self.target_sr,
+            )
+
+            # take audio with the biggest length
+            max_length = max([audio.shape[-1] for audio in audios])
+            audio_lengths = [audio.shape[-1] for audio in audios]
+            max_length = max(audio_lengths)
+            padded_audios = torch.full((len(audios), max_length), self.padding_value)
+            for i, audio in enumerate(audios):
+                padded_audios[i, :audio.shape[-1]] = torch.tensor(audio, dtype=torch.float32)
+
+            processed["wavs"] = padded_audios
+
+            whisper_compression = math.ceil(max_length/320)
+
+            processed = {
+                "whisper_feature": processed,
+                "whisper_compression": whisper_compression
+            }
+        else:
+            processed = self.processor(
+                audios,
+                sampling_rate=self.target_sr,
+                return_tensors="pt",
+                padding=True
+            )
+
+        tokenized_transcripts = self.text_tokenizer(
+            transcripts,
+            padding=True,
+            truncation=True,
+            max_length=512,
+            return_tensors="pt"
+        )
+
+        padded_f0_features = pad_sequence(
+            f0_features,
+            batch_first=True,
+            padding_value=256
+        )  # Shape: [batch_size, max_f0_length, feature_size]
+
+        return (processed, tokenized_transcripts, padded_f0_features), targets

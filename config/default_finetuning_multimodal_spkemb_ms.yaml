@@ -6,7 +6,7 @@ loss:
     name: "focal"
     gamma: 2.0
     alpha: 0.5
-    use_weighted_loss: false # Uses "prior" weights as in https://www.isca-archive.org/odyssey_2024/chen24_odyssey.pdf
+    use_weighted_loss: true # Uses "prior" weights as in https://www.isca-archive.org/odyssey_2024/chen24_odyssey.pdf
 
 datasets:
     train:
@@ -73,10 +73,10 @@ model:
     model_type: "dynamic_audio_text_speakeremb_melspec"
 
     # Audio config
-    # audio_model_name: "microsoft/wavlm-large"
+    audio_model_name: "microsoft/wavlm-large"
     # audio_model_name: "facebook/wav2vec2-xls-r-300m"
     # audio_model_name: "facebook/hubert-large-ls960-ft"
-    audio_model_name: "openai/whisper-large-v3"
+    # audio_model_name: "openai/whisper-large-v3"
     freeze_audio_backbone: true
     audio_layer_weight_strategy: "per_layer"
     # audio_layer_weight_strategy: "weighted_sum"

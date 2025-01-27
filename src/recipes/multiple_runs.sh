@@ -1,17 +1,11 @@
 #!/bin/bash
-GPU_ID=3
-# CONFIG_PATH=("../config/default_last_layer_embedding_finetuning_wavlm.yaml" \
-#             "../config/default_last_layer_embedding_finetuning_wav2vec2_300m.yaml" \
-#             "../config/default_last_layer_embedding_finetuning_wav2vec2_1b.yaml" \
-#             "../config/default_last_layer_embedding_finetuning_hubert_large.yaml" \
-#             "../config/default_last_layer_embedding_finetuning_hubert_xlarge.yaml")
+CUDA_DEVICE=7
 
-CONFIG_PATH=("../config/default_last_layer_embedding_finetuning_wavlm.yaml" \
-            "../config/default_last_layer_embedding_finetuning_wav2vec2_300m.yaml" \
-            "../config/default_last_layer_embedding_finetuning_hubert_large.yaml")
+CONFIG_PATH=("../config/default_lle_bimodal.yaml" \
+            "../config/default_lle_bimodal_2.yaml")
 
 for i in "${CONFIG_PATH[@]}"
 do
     echo "Running $i"
-    python main.py -c=$i -g=$GPU_ID
+    CUDA_VISIBLE_DEVICES=$CUDA_DEVICE python main.py -c=$i
 done

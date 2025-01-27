@@ -11,10 +11,11 @@ from lightning.pytorch.utilities import grad_norm
 from torch.utils.data import WeightedRandomSampler
 from transformers import AutoTokenizer, AutoFeatureExtractor
 from torchmetrics import Accuracy, Precision, Recall, F1Score, MetricCollection, ConfusionMatrix
+from sklearn.metrics import accuracy_score, f1_score, recall_score, precision_score, confusion_matrix
 
 # backward compatibility
 try:
-    from kornia.losses import FocalLoss
+    from kornia.losses import FocalLoss, BinaryFocalLossWithLogits
 except ImportError:
     FocalLoss = None
 
@@ -29,12 +30,19 @@ from utils.dataloader import (
     EmbeddingCollate,
     LastLayerEmbeddingCollate,
     XEUSNestTextCollate,
-    XEUSNestTextSpeakerEmbCollate
+    XEUSNestTextSpeakerEmbCollate,
+    LastLayerEmbeddingTextCollate,
+    LastLayerEmbeddingTextMelSpecCollate,
+    BimodalEmbeddingCollate,
+    BimodalEmbeddingMelSpecCollate,
+    BimodalEmbeddingF0Collate,
+    BimodalEmbeddingF0MelSpecCollate,
+    DynamicAudioTextF0MelSpecCollate
 )
 
 
 class PLWrapper(pl.LightningModule):
-    def __init__(self, config: DictConfig):
+    def __init__(self, config: DictConfig, inference_mode: bool = False):
         super().__init__()
         self.save_hyperparameters(config)
 
@@ -44,18 +52,30 @@ class PLWrapper(pl.LightningModule):
             **config.model
         )
 
-        n_classes = config.data.num_classes
-        base_metrics = MetricCollection({
-            "accuracy": Accuracy(task="multiclass", num_classes=n_classes),
-            "precision": Precision(task="multiclass", average="macro", num_classes=n_classes),
-            "recall": Recall(task="multiclass", average="macro", num_classes=n_classes),
-            "f1-score": F1Score(task="multiclass", average="macro", num_classes=n_classes),
-        })
+        # n_classes = config.data.num_classes
+        # base_metrics = MetricCollection({
+        #     "accuracy": Accuracy(task="multiclass", num_classes=n_classes),
+        #     "precision": Precision(task="multiclass", average="macro", num_classes=n_classes),
+        #     "recall": Recall(task="multiclass", average="macro", num_classes=n_classes),
+        #     "f1-score": F1Score(task="multiclass", average="macro", num_classes=n_classes),
+        # })
 
-        self.train_metrics = base_metrics.clone(prefix='train/')
-        self.val_metrics = base_metrics.clone(prefix='val/')
+        # self.train_metrics = base_metrics.clone(prefix='train/')
+        # self.val_metrics = base_metrics.clone(prefix='val/')
 
-        self.confusion_matrix = ConfusionMatrix(task="multiclass", num_classes=n_classes)
+        # self.confusion_matrix = ConfusionMatrix(task="multiclass", num_classes=n_classes)
+
+        self.train_preds = []
+        self.train_targets = []
+
+        self.val_preds = []
+        self.val_targets = []
+
+        if config.loss.name.lower() == "ce" and config.loss.get("use_weighted_loss", False) and not inference_mode:
+            print("=========== Using weighted loss inside __init__! ===========")
+            self.criterion = torch.nn.CrossEntropyLoss(
+                weight=get_classes_weights(config)
+            )
 
     def setup(self, stage: str):
         # Assign train/val datasets for use in dataloaders
@@ -68,7 +88,25 @@ class PLWrapper(pl.LightningModule):
 
             # When using mixup, we use BCEWithLogitsLoss (because we are working with hot-one-encoded targets)
             if self.config.data.get("mixup_alpha", 0.0) > 0.0:
-                self.criterion = torch.nn.BCEWithLogitsLoss()
+                if self.config.loss.get("use_weighted_loss", False):
+                    print("Using weighted loss!!!")
+                    weights = get_classes_weights(self.config).to(self.device)
+                else:
+                    weights = None
+                print(weights)
+                if self.config.loss.get("name", "ce").lower() == "ce":
+                    print("Using BCEWithLogitsLoss for Mixup!!!")
+                    self.criterion = torch.nn.BCEWithLogitsLoss(weight=weights)
+                elif self.config.loss.get("name", "ce").lower() == "focal":
+                    print("Using BinaryFocalLossWithLogits for Mixup!!!")
+                    self.criterion = BinaryFocalLossWithLogits(
+                        alpha=self.config.loss.get("alpha", 0.5),
+                        gamma=self.config.loss.get("gamma", 2.0),
+                        reduction="mean",
+                        weight=weights
+                    )
+                else:
+                    raise ValueError(f"Invalid loss: {self.config.loss.name}")
             else:
                 if self.config.loss.get("use_weighted_loss", False):
                     print("Using weighted loss")
@@ -78,9 +116,16 @@ class PLWrapper(pl.LightningModule):
                 print(f"Weights: {weights}", self.device)
                 if self.config.loss.get("name", "ce").lower() == "ce":
                     print("Using CrossEntropyLoss")
-                    self.criterion = torch.nn.CrossEntropyLoss(
-                        weight=weights
+                    if self.config.loss.get("label_smoothing", 0.0) > 0.0:
+                        print("Using Label Smoothing!!!!!!!!!!!!!!!!!!!!")
+                        self.criterion = torch.nn.CrossEntropyLoss(
+                        weight=weights,
+                        label_smoothing=self.config.loss.label_smoothing
                     )
+                    else:
+                        self.criterion = torch.nn.CrossEntropyLoss(
+                            weight=weights
+                        )
                 elif self.config.loss.get("name", "ce").lower() == "focal":
                     print("Using Focal Loss")
                     self.criterion = FocalLoss(
@@ -92,18 +137,37 @@ class PLWrapper(pl.LightningModule):
                 else:
                     raise ValueError(f"Invalid loss: {self.config.loss.name}")
 
-    def compute_class_weights_for_epoch(self, epoch):
+    def N_power_ratio(self, ratio: float, n: int):
+        """Compute the N-th power of a ratio.
+        n = 1: linear
+        n > 1: polynomial
+        """
+        print(f"Computing {n}-th power of {ratio} | Result: {ratio**n}")
+        return ratio**n
+
+    def compute_class_weights_for_epoch(self, epoch: int = None, direction: str = 'to_uniform', ratio_degree: int = 1):
         """
         Compute the class weights for the current epoch.
         This function linearly interpolates between the original weights and a uniform distribution.
+
+        Args:
         """
         original_weights = get_classes_weights(self.config)
 
         r = float(epoch) / float(self.trainer.max_epochs)
+
+        r_transformed = self.N_power_ratio(r, ratio_degree)
+
         new_weights = []
-        for w in original_weights:
-            new_w = (1.0 - r) * w + r * 1.0
-            new_weights.append(new_w)
+
+        if direction == 'to_uniform':
+            for w in original_weights:
+                new_w = (1.0 - r) * w + r * 1.0
+                new_weights.append(new_w)
+        elif direction == 'to_distribution':
+            for w in original_weights:
+                new_w = (1.0 - r) * 1.0 + r * w
+                new_weights.append(new_w)
         return torch.tensor(new_weights, dtype=torch.float)
 
     def train_dataloader(self):
@@ -116,7 +180,8 @@ class PLWrapper(pl.LightningModule):
                 target_sr=self.config.data.target_sr,
                 processor=processor,
             )
-        elif self.config.model.model_type.lower() == "dynamic_audio_text":
+        elif self.config.model.model_type.lower() == "dynamic_audio_text" \
+            or self.config.model.model_type.lower() == "dynamic_audio_text_melspec":
             processor = AutoFeatureExtractor.from_pretrained(self.config.model.audio_model_name)
             text_tokenizer = AutoTokenizer.from_pretrained(self.config.model.text_model_name)
             collate_fn = DynamicAudioTextCollate(
@@ -148,6 +213,27 @@ class PLWrapper(pl.LightningModule):
             collate_fn = XEUSNestTextSpeakerEmbCollate(
                 text_tokenizer=text_tokenizer,
             )
+        elif self.config.model.model_type.lower() == "last_layer_embedding_text":
+            text_tokenizer = AutoTokenizer.from_pretrained(self.config.model.text_model_name)
+            collate_fn = LastLayerEmbeddingTextCollate(text_tokenizer=text_tokenizer)
+        elif self.config.model.model_type.lower() == "last_layer_embedding_text_melspec":
+            text_tokenizer = AutoTokenizer.from_pretrained(self.config.model.text_model_name)
+            collate_fn = LastLayerEmbeddingTextMelSpecCollate(text_tokenizer=text_tokenizer)
+        elif self.config.model.model_type.lower() == "bimodal_embedding":
+            collate_fn = BimodalEmbeddingCollate()
+        elif self.config.model.model_type.lower() == "bimodal_embedding_melspec":
+            collate_fn = BimodalEmbeddingMelSpecCollate()
+        elif self.config.model.model_type.lower() == "bimodal_embedding_f0":
+            collate_fn = BimodalEmbeddingF0Collate()
+        elif self.config.model.model_type.lower() == "bimodal_embedding_f0_melspec":
+            collate_fn = BimodalEmbeddingF0MelSpecCollate()
+        elif self.config.model.model_type.lower() == "dynamic_audio_text_f0_melspec":
+            processor = AutoFeatureExtractor.from_pretrained(self.config.model.audio_model_name)
+            text_tokenizer = AutoTokenizer.from_pretrained(self.config.model.text_model_name)
+            collate_fn = DynamicAudioTextF0MelSpecCollate(
+                processor=processor,
+                text_tokenizer=text_tokenizer,
+            )
         else:
             raise ValueError(f"Invalid model type: {self.config.model.model_type}")
 
@@ -157,8 +243,14 @@ class PLWrapper(pl.LightningModule):
             print("Using Balanced Sampling!")
             # Compute sample weights
             if self.config.data.get("use_balanced_sampling_scheduler", False):
+                print("Using Balanced Sampling Scheduler!")
+                print("Balanced Sampling direction: ", self.config.data.get("class_weight_direction", "to_uniform"))
                 # Compute the class weights for the current epoch
-                class_weights = self.compute_class_weights_for_epoch(self.current_epoch)
+                class_weights = self.compute_class_weights_for_epoch(
+                    self.current_epoch,
+                    direction=self.config.data.get("class_weight_direction", "to_uniform"),
+                    ratio_degree=self.config.data.get("class_weight_ratio_degree", 1)
+                )
                 print(f"Class weights: {class_weights}")
             else:
                 class_weights = get_classes_weights(self.config)
@@ -200,7 +292,8 @@ class PLWrapper(pl.LightningModule):
                 target_sr=self.config.data.target_sr,
                 processor=processor,
             )
-        elif self.config.model.model_type.lower() == "dynamic_audio_text":
+        elif self.config.model.model_type.lower() == "dynamic_audio_text" \
+            or self.config.model.model_type.lower() == "dynamic_audio_text_melspec":
             processor = AutoFeatureExtractor.from_pretrained(self.config.model.audio_model_name)
             text_tokenizer = AutoTokenizer.from_pretrained(self.config.model.text_model_name)
             collate_fn = DynamicAudioTextCollate(
@@ -232,11 +325,32 @@ class PLWrapper(pl.LightningModule):
             collate_fn = XEUSNestTextSpeakerEmbCollate(
                 text_tokenizer=text_tokenizer,
             )
+        elif self.config.model.model_type.lower() == "last_layer_embedding_text":
+            text_tokenizer = AutoTokenizer.from_pretrained(self.config.model.text_model_name)
+            collate_fn = LastLayerEmbeddingTextCollate(text_tokenizer=text_tokenizer)
+        elif self.config.model.model_type.lower() == "last_layer_embedding_text_melspec":
+            text_tokenizer = AutoTokenizer.from_pretrained(self.config.model.text_model_name)
+            collate_fn = LastLayerEmbeddingTextMelSpecCollate(text_tokenizer=text_tokenizer)
+        elif self.config.model.model_type.lower() == "bimodal_embedding":
+            collate_fn = BimodalEmbeddingCollate()
+        elif self.config.model.model_type.lower() == "bimodal_embedding_melspec":
+            collate_fn = BimodalEmbeddingMelSpecCollate()
+        elif self.config.model.model_type.lower() == "bimodal_embedding_f0":
+            collate_fn = BimodalEmbeddingF0Collate()
+        elif self.config.model.model_type.lower() == "bimodal_embedding_f0_melspec":
+            collate_fn = BimodalEmbeddingF0MelSpecCollate()
+        elif self.config.model.model_type.lower() == "dynamic_audio_text_f0_melspec":
+            processor = AutoFeatureExtractor.from_pretrained(self.config.model.audio_model_name)
+            text_tokenizer = AutoTokenizer.from_pretrained(self.config.model.text_model_name)
+            collate_fn = DynamicAudioTextF0MelSpecCollate(
+                processor=processor,
+                text_tokenizer=text_tokenizer,
+            )
         else:
             raise ValueError(f"Invalid model type: {self.config.model.model_type}")
         return torch.utils.data.DataLoader(
             self.val_dataset,
-            batch_size=self.config.train.batch_size,
+            batch_size=1,
             shuffle=False,
             num_workers=self.config.train.num_workers,
             pin_memory=True,
@@ -354,10 +468,16 @@ class PLWrapper(pl.LightningModule):
         if self.config.data.get("mixup_alpha", 0.0) > 0.0:
             targets = torch.argmax(targets, dim=1)
 
-        # Update and log training metrics
-        metrics = self.train_metrics(logits, targets)
-        # Log metrics
-        self.log_dict(metrics, on_step=True, on_epoch=True, prog_bar=True, logger=True)
+        # Get predictions
+        preds = torch.argmax(logits, dim=1)
+        # Store predictions and targets
+        self.train_preds.append(preds.cpu().numpy())
+        self.train_targets.append(targets.cpu().numpy())
+
+        # # Update and log training metrics
+        # metrics = self.train_metrics(logits, targets)
+        # # Log metrics
+        # self.log_dict(metrics, on_step=True, on_epoch=True, prog_bar=True, logger=True)
         # Log training loss
         self.log("train/loss", loss, on_step=True, on_epoch=True, prog_bar=True, logger=True)
 
@@ -370,52 +490,97 @@ class PLWrapper(pl.LightningModule):
         logits = self.forward(input_features)
         loss = self.criterion(logits, targets)
 
-        # Update and log validation metrics
-        metrics = self.val_metrics(logits, targets)
-
         if self.config.data.get("mixup_alpha", 0.0) > 0.0:
             targets = torch.argmax(targets, dim=1)
 
-        # Log metrics
-        self.log_dict(metrics, on_step=True, on_epoch=True, prog_bar=True, logger=True)
+        # Get predictions
+        preds = torch.argmax(logits, dim=1)
+        # Store predictions and targets
+        self.val_preds.append(preds.cpu().numpy())
+        self.val_targets.append(targets.cpu().numpy())
+
+        # # Update and log validation metrics
+        # metrics = self.val_metrics(logits, targets)
+        # # Log metrics
+        # self.log_dict(metrics, on_step=True, on_epoch=True, prog_bar=True, logger=True)
         # Log validation loss
         self.log("val/loss", loss, on_step=True, on_epoch=True, prog_bar=True, logger=True)
         # Log confusion matrix
-        preds = torch.argmax(logits, dim=1)
-        self.confusion_matrix(preds, targets)
+        # preds = torch.argmax(logits, dim=1)
+        # self.confusion_matrix(preds, targets)
 
         return loss
 
-    def on_validation_epoch_end(self):
-        # Compute the confusion matrix
-        cm = self.confusion_matrix.compute().cpu().numpy()
-        # Reset confusion matrix for the next epoch
-        self.confusion_matrix.reset()
-        # Log confusion matrix as a figure
-        fig = self._plot_confusion_matrix(cm)
-        self.logger.log_image(
-            "val/confusion_matrix",
-            [wandb.Image(fig, caption="Confusion Matrix")],
-            self.current_epoch
-        )
-        plt.close(fig)
 
-        if self.config.model.get("layer_weight_strategy", "per_layer") == "weighted_sum" or \
-            self.config.model.get("layer_weight_strategy", "per_layer") == "weighted_sum_2":
-            layer_weights = self.model.get_layer_weights()
-            layer_weights = torch.tensor(layer_weights)
-            # apply softmax to the weights
-            layer_weights = F.softmax(layer_weights, dim=0)
-            fig = self._plot_layer_weights_bar_chart(layer_weights)
+    def on_train_epoch_end(self):
+        """Called at the end of the training epoch."""
+        if self.train_preds and self.train_targets:
+            # Concatenate all predictions and targets
+            all_preds = np.concatenate(self.train_preds)
+            all_targets = np.concatenate(self.train_targets)
+
+            # Compute metrics using sklearn
+            train_accuracy = accuracy_score(all_targets, all_preds)
+            train_precision = precision_score(all_targets, all_preds, average='macro', zero_division=0)
+            train_recall = recall_score(all_targets, all_preds, average='macro', zero_division=0)
+            train_f1 = f1_score(all_targets, all_preds, average='macro', zero_division=0)
+
+            # Log the metrics
+            self.log("train/accuracy", train_accuracy, prog_bar=True, logger=True)
+            self.log("train/precision", train_precision, prog_bar=True, logger=True)
+            self.log("train/recall", train_recall, prog_bar=True, logger=True)
+            self.log("train/f1-score", train_f1, prog_bar=True, logger=True)
+
+            cm = confusion_matrix(all_targets, all_preds)
+            fig = self._plot_confusion_matrix(cm)
             self.logger.log_image(
-                "val/layer_weights",
-                [wandb.Image(fig, caption="Layer Weights")],
+                "train/confusion_matrix",
+                [wandb.Image(fig, caption="Confusion Matrix")],
                 self.current_epoch
             )
             plt.close(fig)
 
-        if self.config.data.get("use_balanced_sampling_scheduler", False):
-            class_weights = self.compute_class_weights_for_epoch(self.current_epoch)
+            # Reset the lists for the next epoch
+            self.train_preds = []
+            self.train_targets = []
+
+    def on_validation_epoch_end(self):
+        # Compute metrics using sklearn
+        if self.val_preds and self.val_targets:
+            all_preds = np.concatenate(self.val_preds)
+            all_targets = np.concatenate(self.val_targets)
+
+            val_accuracy = accuracy_score(all_targets, all_preds)
+            val_precision = precision_score(all_targets, all_preds, average='macro', zero_division=0)
+            val_recall = recall_score(all_targets, all_preds, average='macro', zero_division=0)
+            val_f1 = f1_score(all_targets, all_preds, average='macro', zero_division=0)
+
+            # Log the metrics
+            self.log("val/accuracy", val_accuracy, prog_bar=True, logger=True)
+            self.log("val/precision", val_precision, prog_bar=True, logger=True)
+            self.log("val/recall", val_recall, prog_bar=True, logger=True)
+            self.log("val/f1-score", val_f1, prog_bar=True, logger=True)
+
+            cm = confusion_matrix(all_targets, all_preds)
+            fig = self._plot_confusion_matrix(cm)
+            self.logger.log_image(
+                "val/confusion_matrix",
+                [wandb.Image(fig, caption="Confusion Matrix")],
+                self.current_epoch
+            )
+            plt.close(fig)
+
+            # Reset the lists for the next epoch
+            self.val_preds = []
+            self.val_targets = []
+
+        if self.config.data.get("use_balanced_sampling", False) and self.config.data.get("use_balanced_sampling_scheduler", False):
+            # Plot the class weights
+            class_weights = self.compute_class_weights_for_epoch(
+                self.current_epoch,
+                direction=self.config.data.get("class_weight_direction", "to_uniform"),
+                ratio_degree=self.config.data.get("class_weight_ratio_degree", 1)
+            )
             fig = self._plot_class_weights(class_weights)
             self.logger.log_image(
                 "val/class_weights",
@@ -423,6 +588,18 @@ class PLWrapper(pl.LightningModule):
                 self.current_epoch
             )
             plt.close(fig)
+        # Compute the confusion matrix
+        # cm = self.confusion_matrix.compute().cpu().numpy()
+        # # Reset confusion matrix for the next epoch
+        # self.confusion_matrix.reset()
+        # # Log confusion matrix as a figure
+        # fig = self._plot_confusion_matrix(cm)
+        # self.logger.log_image(
+        #     "val/confusion_matrix",
+        #     [wandb.Image(fig, caption="Confusion Matrix")],
+        #     self.current_epoch
+        # )
+        # plt.close(fig)
 
     def _plot_layer_weights_bar_chart(self, layer_weights):
         fig, ax = plt.subplots(figsize=(8, 6))

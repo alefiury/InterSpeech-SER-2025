@@ -1,0 +1,10 @@
+omegaconf==2.3.0
+pandas==2.2.2
+scikit-learn==1.5.2
+transformers==4.44.2
+wandb==0.18.0
+seaborn==0.13.2
+einops==0.8.0
+kornia==0.7.4
+nlpaug==1.1.11
+torch-audiomentations

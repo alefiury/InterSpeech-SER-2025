@@ -24,8 +24,16 @@ class FineTuneCED(nn.Module):
     ):
         super().__init__()
 
-        self.backbone = ced_small(pretrained=pretrained)
-        # self.backbone = ced_base(pretrained=pretrained)
+        if embedding_dim==128:
+            self.backbone = ced_tiny(pretrained=pretrained)
+        elif embedding_dim==256:
+            self.backbone = ced_mini(pretrained=pretrained)
+        elif embedding_dim==384:
+            self.backbone = ced_small(pretrained=pretrained)
+        elif embedding_dim==768:
+            self.backbone = ced_base(pretrained=pretrained)
+        else:
+            raise ValueError("embedding_dim must be one of 128, 256, 384, 768")
 
         if freeze_backbone_flag:
             self.freeze_backbone()
@@ -34,6 +42,7 @@ class FineTuneCED(nn.Module):
             nn.Linear(embedding_dim, proj_size),
             nn.ReLU(),
             nn.Dropout(proj_dropout),
+            nn.Linear(proj_size, proj_size),
         )
 
     def freeze_backbone(self):

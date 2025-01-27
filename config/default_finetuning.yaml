@@ -6,21 +6,23 @@ loss:
     name: "ce" # can be "ce" (cross-entropy) or "focal" (focal loss)
     gamma: 2.0
     alpha: 0.5
-    use_weighted_loss: false # Uses "prior" weights as in https://www.isca-archive.org/odyssey_2024/chen24_odyssey.pdf
+    use_weighted_loss: true # Uses "prior" weights as in https://www.isca-archive.org/odyssey_2024/chen24_odyssey.pdf
 
 datasets:
     train:
         - name: Train
-          metadata_path: "/raid/alefiury/SER/InterSpeech2025/InterSpeech-SER-2025/Dataset/train_set.csv"
-          base_dir: "/raid/alefiury/SER/InterSpeech2025/challenge_dataset/Audios"
+          metadata_path: "/hadatasets/alef.ferreira/SER/Interspeech/InterSpeech-SER-2025/Dataset/transcribed_canary_train_set.csv"
+          base_dir: "/hadatasets/alef.ferreira/SER/Interspeech/Audios"
           filename_column: "FileName"
+          gender_column: "Gender"
           target_column: "EmoClass"
 
     val:
         - name: Validation
-          metadata_path: "/raid/alefiury/SER/InterSpeech2025/InterSpeech-SER-2025/Dataset/validation_set.csv"
-          base_dir: "/raid/alefiury/SER/InterSpeech2025/challenge_dataset/Audios"
+          metadata_path: "/hadatasets/alef.ferreira/SER/Interspeech/InterSpeech-SER-2025/Dataset/transcribed_canary_validation_set.csv"
+          base_dir: "/hadatasets/alef.ferreira/SER/Interspeech/Audios"
           filename_column: "FileName"
+          gender_column: "Gender"
           target_column: "EmoClass"
 
 data:
@@ -29,24 +31,27 @@ data:
     target_sr: 16000
 
     use_balanced_sampling: false # If true, the dataset will be balanced based on the inverse frequency of the classes
+    use_balanced_sampling_scheduler: false # If true, the dataset will be balanced based on the inverse frequency of the classes, but the weights will be updated during training
+    class_weight_direction: "to_uniform" # can be 'to_uniform' or 'to_distribution', this parameter is used to define the direction of the class weights
+    class_weight_ratio_degree: 1 # 1 = linear, > 1 = polynomial
 
     mixup_alpha: 0.0 # 0.0 to disable mixup, if you want to use mixup, set this value to 0.5 (recommended)
 
-    use_rand_truncation: false # If true, the audio will be randomly truncated between min_duration and the original duration
+    use_rand_truncation: true # If true, the audio will be randomly truncated between min_duration and the original duration
     min_duration: 2.0 # min duration (in seconds), only used if use_rand_truncation is True
 
-    use_background_noise: false # If true, background noise will be added to the audio (Music and environmental noise)
-    background_noise_dir: "/raid/alefiury/SER/InterSpeech2025/InterSpeech-SER-2025/augmentation_data/musan"
+    use_background_noise: true # If true, background noise will be added to the audio (Music and environmental noise)
+    background_noise_dir: "/hadatasets/alef.ferreira/SER/Interspeech/InterSpeech-SER-2025/augmentation_data/musan"
     background_noise_min_snr_in_db: 3.0
     background_noise_max_snr_in_db: 15.0
     background_noise_p: 0.5
 
-    use_rir: false # If true, RIRs (reverberation) will be added to the audio
-    rir_dir: "/raid/alefiury/SER/InterSpeech2025/InterSpeech-SER-2025/augmentation_data/RIRS_NOISES"
+    use_rir: true # If true, RIRs (reverberation) will be added to the audio
+    rir_dir: "/hadatasets/alef.ferreira/SER/Interspeech/InterSpeech-SER-2025/augmentation_data/RIRS_NOISES"
     rir_p: 0.5
 
     # Text augmentation
-    use_text_augmentation: false # If true, text augmentation will be used (random word deletion)
+    use_text_augmentation: true # If true, text augmentation will be used (random word deletion)
     text_augmentation_p: 0.5
 
     # label2id must represent the names of the target in the metadata file
@@ -61,8 +66,13 @@ data:
         "U": 7
     }
 
+    gender2id: {
+        "Male": 0,
+        "Female": 1
+    }
+
 train:
-    batch_size: 8
+    batch_size: 16
     shuffle: True
     num_workers: 12
 
@@ -88,12 +98,16 @@ model:
     num_feature_layers: 25 # Must be adapted to the model
     specific_layer_idx: -1 # -1 Take the last layer, only used if layer_weight_strategy is "per_layer"
     pooling_strategy: "mean" # Take the mean of the sequence in the last layer
-    freeze_backbone: true # Whether to freeze the backbone or not
+    freeze_backbone: false # Whether to freeze the backbone or not
 
     # routing parameters, only used if layer_weight_strategy is "routing"
     gate_hidden_dim: ${model.mlp_input_dim}
     use_top_k: false
     top_k: 3
+
+    # Gender emb
+    use_gender_emb: true
+    gender_embedding_dim: 16
 
 optimizer:
     name: "adamw"
@@ -133,6 +147,7 @@ trainer:
     gradient_clip_algorithm: "norm"
     val_check_interval: 1.0
     accumulate_grad_batches: 1
+    reload_dataloaders_every_n_epochs: 0 # This should be set to 1 if "data.use_balanced_sampling_scheduler" is True
 
 model_checkpoint:
     mode: "max"
