@@ -557,17 +557,9 @@ class SERLastLayerEmbeddingModel(nn.Module):
         mlp_dropout: float = 0.1,
         mlp_activation_func: str = "relu",
         pooling_strategy: str = "mean", # "mean" or "attpool"
+        use_swiglu_mlp: bool = False,
     ):
         super().__init__()
-        self.mlp = MLPBase(
-            input_size=mlp_input_dim,
-            hidden_dim=mlp_hidden_dim,
-            num_layers=mlp_num_layers,
-            output_size=mlp_output_size,
-            dropout=mlp_dropout,
-            activation_func=mlp_activation_func,
-        )
-
         self.pooling_strategy = pooling_strategy
         if pooling_strategy not in ["mean", "attpool"]:
             raise ValueError(
@@ -579,6 +571,25 @@ class SERLastLayerEmbeddingModel(nn.Module):
             # Which is half of the MLP input dimension because we concatenate mean and std
             # Consider that mlp_input_dim is always equal to the F dimension of the embeddings
             self.attpool = AttentiveStatisticsPooling(input_size=int(mlp_input_dim/2))
+
+        if use_swiglu_mlp:
+            print("Using SwishGLU MLP!!!!!!!!!!!")
+            self.mlp = MLP_SwiGLU(
+                input_size=mlp_input_dim,
+                hidden_dim=mlp_hidden_dim,
+                output_size=mlp_output_size,
+                dropout=mlp_dropout,
+            )
+        else:
+            # MLP
+            self.mlp = MLPBase(
+                input_size=mlp_input_dim,
+                hidden_dim=mlp_hidden_dim,
+                num_layers=mlp_num_layers,
+                output_size=mlp_output_size,
+                dropout=mlp_dropout,
+                activation_func=mlp_activation_func,
+            )
 
     def _apply_pooling(self, embeddings: torch.Tensor) -> torch.Tensor:
         """
