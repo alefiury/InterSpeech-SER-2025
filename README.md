@@ -15,6 +15,7 @@ Install the required dependencies using the following command:
 pip install -r requirements.txt --extra-index-url https://download.pytorch.org/whl/cu121
 ```
 
+
 ## Number of Layers per Model
 
 - HuBERT Large
