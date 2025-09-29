@@ -2,6 +2,8 @@
 
 This repository contains the code for the paper titled [**Enhancing Speech Emotion Recognition with Graph-Based Multimodal Fusion and Prosodic Features for the Speech Emotion Recognition in Naturalistic Conditions Challenge at Interspeech 2025**](https://arxiv.org/abs/2506.02088).
 
+This work got **8th place** on the The Interspeech 2025 Challenge on Speech Emotion Recognition in Naturalistic Conditions.
+
 ## Prerequisites
     - Operating System: Ubuntu (tested on Ubuntu 22.04.4 LTS)
     - Conda Environment (tested on Conda version 24.5.0)
