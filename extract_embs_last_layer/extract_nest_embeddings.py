@@ -8,23 +8,20 @@ import wandb
 import pandas as pd
 from tqdm import tqdm
 import torch, torchaudio
-try:
-    from espnet2.tasks.ssl import SSLTask
-except ImportError:
-    SSLTask = None
+from nemo.collections.asr.models import EncDecDenoiseMaskedTokenPredModel
 
 
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
-def load_model():
-    model_path = "/hadatasets/alef.ferreira/SER/Interspeech/InterSpeech-SER-2025/ssl_checkpoints/XEUS/xeus_checkpoint.pth"
-    model, _ = SSLTask.build_model_from_file(
-        None,
-        model_path,
-    )
+
+def load_model(model_name="nvidia/ssl_en_nest_xlarge_v1.0"):
+    nest_model = EncDecDenoiseMaskedTokenPredModel.from_pretrained(model_name=model_name)
+    print(nest_model)
+    model = nest_model.encoder
+    feature_extractor = nest_model.preprocessor
     model = model.to(device)
     model.eval()
-    return model
+    return model, feature_extractor
 
 
 def extract_xeus_embeddings(
@@ -32,7 +29,7 @@ def extract_xeus_embeddings(
     input_dir: str,
     output_dir: str
 ) -> None:
-    model = load_model()
+    model, feature_extractor = load_model()
     for filepath in tqdm(filelist, desc="Extracting embeddings"):
         # Load audio file
         # if not exists(filepath):
@@ -59,7 +56,12 @@ def extract_xeus_embeddings(
         audio_data = audio_data.unsqueeze(0).to(device)
         wav_lengths = torch.tensor([audio_data.shape[-1]]).to(device)
         with torch.no_grad():
-            hidden_states = model.encode(audio_data, wav_lengths, use_mask=False, use_final_output=False)[0][-1]
+            processed_signal, processed_signal_length = feature_extractor(input_signal=audio_data, length=wav_lengths)
+            hidden_states = model(audio_signal=processed_signal, length=processed_signal_length)[0]
+            # invert dimensions to have (time, feature)
+            hidden_states = hidden_states.transpose(1, 2)
+
+        print(hidden_states.shape)
         # print(hidden_states.shape)
         output_filename = basename(filepath).split(".")[0] + ".pt"
         output_filepath = join(output_subdir, output_filename)

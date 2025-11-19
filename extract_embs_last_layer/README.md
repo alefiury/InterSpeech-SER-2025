@@ -32,3 +32,21 @@ python3 extract_wavlm_embeddings.py -b=PATH_TO_BASE_DIR -i=NAME_OF_DIR_INSIDE_BA
 
 - `-col` or `--column-name`:
   Name of the column in the CSV file that contains the filenames. Default is `filename`.
+
+## Extraction with XEUS Model
+
+XEUS huggingface repo: https://huggingface.co/espnet/xeus
+
+Download the checkpoint and config:
+
+```
+download_ssl_chekpoints.sh
+```
+
+Install dependencies:
+
+ATTENTION! Make sure to install the ESPnet package in "master" branch, not in "ssl" like in the repo, "ssl" branch is outdated.
+
+```
+pip install 'espnet @ git+https://github.com/wanchichen/espnet.git@master'
+```
