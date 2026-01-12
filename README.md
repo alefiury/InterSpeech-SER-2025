@@ -22,6 +22,8 @@ pip install -r requirements.txt --extra-index-url https://download.pytorch.org/w
 
 ## Number of Layers per Model
 
+### Audio Pre-trained Models
+
 - HuBERT Large
     - 25 Layers
     - Input Dim: 1024
@@ -116,3 +118,41 @@ pip install -r requirements.txt --extra-index-url https://download.pytorch.org/w
     - 33 Layers
     - Input Dim: 1280
     - openai/whisper-large-v3
+
+
+### Text Pre-trained Models
+
+- BERT Base Uncased
+    - 12 Layers
+    - Input Dim: 768
+    - bert-base-uncased
+
+- BERT Large Uncased
+    - 24 Layers
+    - Input Dim: 1024
+    - bert-large-uncased
+
+- RoBERTa Base
+    - 12 Layers
+    - Input Dim: 768
+    - roberta-base
+
+- RoBERTa Large
+    - 24 Layers
+    - Input Dim: 1024
+    - roberta-large
+
+- E5 Base
+    - 12 Layers
+    - Input Dim: 768
+    - intfloat/e5-base
+
+- E5 Large
+    - 24 Layers
+    - Input Dim: 1024
+    - intfloat/e5-large
+
+- Qwen3 Embedding
+    - 28 Layers
+    - Input Dim: 1024
+    - Qwen/Qwen3-Embedding-0.6B
