@@ -31,7 +31,9 @@ def create_ser_model(
     model_type: "dynamic" or "embedding"
     kwargs: parameters to be passed to the model constructors
     """
-    if model_type.lower() == "dynamic":
+    if model_type.lower() == "dynamic" or \
+        model_type.lower() == "dynamic_audio" or \
+            model_type.lower() == "dynamic_text":
         return SERDynamicModel(**kwargs)
     elif model_type.lower() == "dynamic_audio_text":
         return SERDynamicAudioTextModel(**kwargs)

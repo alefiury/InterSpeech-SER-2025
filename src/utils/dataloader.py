@@ -107,6 +107,13 @@ class EmbeddingDataset(Dataset):
         filename = self.filenames[index]
         filepath = os.path.join(self.base_dir, filename)
 
+        if filename.endswith(".wav"):
+            filepath = filepath[:-4] + ".pt"
+        elif filename.endswith(".flac"):
+            filepath = filepath[:-5] + ".pt"
+        elif filename.endswith(".mp3"):
+            filepath = filepath[:-4] + ".pt"
+
         target = self.targets[index]
 
         features = self._load_file(filepath)
@@ -275,6 +282,8 @@ class DynamicDataset(Dataset):
         use_rir: Optional[bool] = False,
         rir_dir: Optional[str] = None,
         rir_p: Optional[float] = 0.5,
+        # gender data
+        use_gender_data: Optional[bool] = False,
     ):
         """Initialization"""
         self.data = data
@@ -283,7 +292,10 @@ class DynamicDataset(Dataset):
         # Cache filepaths and targets
         self.filenames = self.data[filename_column].values
         self.targets = self.data[target_column].values
-        # self.genders = self.data[gender_column].values
+
+        self.use_gender_data = use_gender_data
+        if use_gender_data:
+            self.genders = self.data[gender_column].values
 
         self.filename_column = filename_column
         self.target_column = target_column
@@ -418,8 +430,11 @@ class DynamicDataset(Dataset):
         # Impulse response (Reverberation) or Identity
         audio = self.impulse_response(audio.unsqueeze(0)).squeeze(0)
 
-        # gender
-        genders = self.genders[index]
+        if self.use_gender_data:
+            # gender
+            genders = self.genders[index]
+        else:
+            genders = -1
 
         return audio.squeeze(0).numpy(), genders, target
 
@@ -547,8 +562,11 @@ class DynamicAudioTextDataset(DynamicDataset):
         # Impulse response (Reverberation) or Identity
         audio = self.impulse_response(audio.unsqueeze(0)).squeeze(0)
 
-        # gender
-        genders = self.genders[index]
+        if self.use_gender_data:
+            # gender
+            genders = self.genders[index]
+        else:
+            genders = -1
 
         return audio.squeeze(0).numpy(), transcript, genders, target
 
@@ -605,6 +623,79 @@ class DynamicAudioTextCollate:
             )
 
         return (processed, tokenized_transcripts, genders), targets
+
+
+class DynamicTextDataset(DynamicDataset):
+    def __init__(
+        self,
+        transcript_column: str,
+        # text augmentation parameters (Optional)
+        use_text_augmentation: Optional[bool] = False,
+        text_augmentation_p: Optional[float] = 0.5,
+        use_prompt: Optional[bool] = False,
+        prompt_text: Optional[str] = "Represent the transcript for speech emotion recognition.",
+        **kwargs,
+    ):
+        super().__init__(**kwargs)
+        """Initialization"""
+        self.transcripts = self.data[transcript_column].values
+        self.use_text_augmentation = use_text_augmentation
+        # Text augmentation
+        if self.use_text_augmentation:
+            self.text_augmenter = naw.RandomWordAug()
+            self.text_augmentation_p = text_augmentation_p
+
+        self.use_prompt = use_prompt
+        self.prompt_text = prompt_text
+
+    def build_prompt(self, transcript: str) -> str:
+        return f"Instruct: {self.prompt_text}\nQuery:{transcript}"
+
+    def __getitem__(self, index: int) -> Dict[torch.Tensor, torch.Tensor]:
+        main_target = self.targets[index]
+        main_file = self.filenames[index]
+        transcript = self.transcripts[index]
+
+        if self.use_prompt:
+            transcript = self.build_prompt(transcript)
+
+        # Apply text augmentation
+        if self.use_text_augmentation and self.data_type == "train" and random.random() < self.text_augmentation_p:
+            transcript = self.text_augmenter.augment(transcript)[0]
+
+        return transcript, main_target
+
+
+class DynamicTextCollate:
+    def __init__(
+        self,
+        text_tokenizer = None,
+    ):
+        """
+        Collation function for dynamic batching of audio data.
+
+        Params:
+            padding_value (float): Value to use for padding shorter sequences.
+            processor: A processor or feature extractor to process raw audio
+                       into features if desired.
+        """
+        self.text_tokenizer = text_tokenizer
+
+    def __call__(self, batch: List[Tuple[torch.Tensor, torch.Tensor]]) -> Tuple[torch.Tensor, Optional[torch.Tensor], torch.Tensor]:
+        transcripts, targets = zip(*batch)
+        targets = torch.stack([t if isinstance(t, torch.Tensor) else torch.tensor(t) for t in targets])
+
+        tokenized_transcripts = self.text_tokenizer(
+            transcripts,
+            padding=True,
+            truncation=True,
+            max_length=512,
+            return_tensors="pt"
+        )
+        # dummy genders
+        genders = torch.tensor([-1] * len(transcripts))
+
+        return (tokenized_transcripts, genders), targets
 
 
 class DynamicAudioTextSpeakerEmbDataset(DynamicDataset):

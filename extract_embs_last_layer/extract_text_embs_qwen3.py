@@ -1,216 +1,190 @@
-import sys
 import os
+import sys
+import argparse
+from os.path import exists, basename, join, relpath, dirname
+from typing import Optional
+
 import pandas as pd
-import torch
 from tqdm import tqdm
+import torch
 from torch import Tensor
 import torch.nn.functional as F
-from concurrent.futures import ThreadPoolExecutor, as_completed
 from transformers import AutoModel, AutoTokenizer
 
-
-# Set hardcoded paths
-INPUT_CSV = "/hadatasets/alef.ferreira/SER/Interspeech/canary1b_transcripts.csv"
-OUTPUT_DIR = "/hadatasets/alef.ferreira/SER/Interspeech"
-LAST_LAYER_OUTPUT_DIR = "Texts_E5_last_layer"
-POOLER_OUTPUT_DIR = "Texts_E5_pooler"
-MODEL_NAME = "Qwen/Qwen3-Embedding-0.6B"  # Pre-trained model name or path
+# try:
+from nemo.collections.asr.models import ASRModel
+# except ImportError:
+#     print("NeMo is not installed. Please install NeMo to use ASRModel.")
+#     ASRModel = None
 
 
-def last_token_pool(
-    last_hidden_states: Tensor,
-    attention_mask: Tensor
-) -> Tensor:
+def get_asr_model():
+    if ASRModel is not None:
+        return ASRModel.from_pretrained(model_name="nvidia/canary-1b-v2")
+    else:
+        raise ImportError("NeMo is not installed. Please install NeMo to use ASRModel.")
+
+@torch.inference_mode()
+def get_transcript(asr_model, audio_filepath: str) -> str:
+    if ASRModel is None:
+        raise ImportError("NeMo is not installed. Please install NeMo to use ASRModel.")
+    transcription = asr_model.transcribe([audio_filepath], source_lang='en', target_lang='en')
+    return transcription[0]
+
+
+def last_token_pool(last_hidden_states: Tensor, attention_mask: Tensor) -> Tensor:
     left_padding = (attention_mask[:, -1].sum() == attention_mask.shape[0])
     if left_padding:
         return last_hidden_states[:, -1]
     else:
         sequence_lengths = attention_mask.sum(dim=1) - 1
         batch_size = last_hidden_states.shape[0]
-        return last_hidden_states[torch.arange(batch_size, device=last_hidden_states.device), sequence_lengths]
+        return last_hidden_states[
+            torch.arange(batch_size, device=last_hidden_states.device),
+            sequence_lengths
+        ]
 
 
 def get_detailed_instruct(task_description: str, query: str) -> str:
-    return f'Instruct: {task_description}\nQuery:{query}'
+    return f"Instruct: {task_description}\nQuery:{query}"
 
 
-def build_batch_instruction(task_description: str, queries: list[str]) -> list[str]:
-    return [get_detailed_instruct(task_description, q) for q in queries]
+def load_model(model_name: str, device: torch.device):
+    tokenizer = AutoTokenizer.from_pretrained(model_name, padding_side="left")
+
+    model = AutoModel.from_pretrained(model_name, torch_dtype="auto")
+    model = model.to(device).eval()
+    return model, tokenizer
 
 
 @torch.inference_mode()
-def extract_embeddings(model, tokenizer, text, max_length=8192):
-    batch_dict = tokenizer(
-        [text] if isinstance(text, str) else text,
+def extract_embedding_one(
+    model,
+    tokenizer,
+    text: str,
+    *,
+    device: torch.device,
+    max_length: int,
+) -> torch.Tensor:
+    batch = tokenizer(
+        text,
         padding=True,
         truncation=True,
         max_length=max_length,
         return_tensors="pt",
     )
-    batch_dict.to(model.device)
-    with torch.no_grad():
-        outputs = model(**batch_dict)
-        embeddings = last_token_pool(outputs.last_hidden_state, batch_dict['attention_mask'])
-        embeddings = F.normalize(embeddings, p=2, dim=1)
-    return embeddings
+    batch = {k: v.to(device) for k, v in batch.items()}
+
+    outputs = model(**batch)
+
+    emb = last_token_pool(outputs.last_hidden_state, batch["attention_mask"])  # [1, D]
+    emb = F.normalize(emb, p=2, dim=1)                                         # [1, D]
+    return emb.squeeze(0).detach().cpu()                                       # [D]
 
 
-# Set device to GPU if available
-device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-if device.type != "cuda":
-    print("Warning: CUDA is not available. Using CPU.")
+def safe_stem(path_or_name: str) -> str:
+    base = basename(str(path_or_name))
+    stem, _ = os.path.splitext(base)
+    return stem
 
-def load_model(model_name: str, device: torch.device):
-    """
-    Load the pre-trained model and tokenizer.
-    
-    Args:
-        model_name (str): Name or path of the pre-trained model.
-        device (torch.device): Computation device (CPU or GPU).
-    
-    Returns:
-        model (AutoModel): Loaded pre-trained model.
-        tokenizer (AutoTokenizer): Loaded tokenizer.
-    """
-    print(f"Loading model '{model_name}'...")
-    tokenizer = AutoTokenizer.from_pretrained(model_name)
-    model = AutoModel.from_pretrained(model_name, output_hidden_states=True)
-    model.to(device)
-    model.eval()
-    print("Model and tokenizer loaded successfully.")
-    return model, tokenizer
 
-def save_embedding(embedding: torch.Tensor, output_filepath: str):
-    """
-    Save the embedding tensor to a .pt file.
-    
-    Args:
-        embedding (torch.Tensor): The embedding tensor to save.
-        output_filepath (str): Path where the embedding will be saved.
-    """
-    os.makedirs(os.path.dirname(output_filepath), exist_ok=True)
-    torch.save(embedding.cpu(), output_filepath)
+def make_output_path(
+    filename: str,
+    input_dir: Optional[str],
+    output_dir: str,
+) -> str:
+    if input_dir:
+        try:
+            rel = relpath(filename, input_dir)
+            sub_dir = dirname(rel)
+            out_subdir = join(output_dir, sub_dir)
+        except Exception:
+            out_subdir = output_dir
+    else:
+        out_subdir = output_dir
 
-def process_row(row: pd.Series, output_dir: str, model, tokenizer, device: torch.device):
-    """
-    Extract and save the embedding for a single transcript.
-    
-    Args:
-        row (pd.Series): A row from the DataFrame containing 'FileName' and 'Transcript'.
-        output_dir (str): Directory where embeddings will be saved.
-        model (AutoModel): Pre-trained model for embedding extraction.
-        tokenizer (AutoTokenizer): Tokenizer corresponding to the model.
-        device (torch.device): Computation device.
+    os.makedirs(out_subdir, exist_ok=True)
+    return join(out_subdir, safe_stem(filename) + ".pt")
 
-    Returns:
-        str or None: The filename of the saved embedding or None if an error occurred.
-    """
-    try:
-        text = row['Transcript']
-        filename = row['FileName']
-        output_filename = os.path.basename(filename)[:-4] + ".pt"
-        last_layer_output_filepath = os.path.join(output_dir, LAST_LAYER_OUTPUT_DIR, output_filename)
-        pooler_output_filepath = os.path.join(output_dir, POOLER_OUTPUT_DIR, output_filename)
-
-        if os.path.exists(last_layer_output_filepath) and os.path.exists(pooler_output_filepath):
-            return output_filename
-
-        # Tokenize the text
-        inputs = tokenizer(
-            text,
-            max_length=512,
-            truncation=True,
-            return_tensors='pt'
-        ).to(device)
-
-        with torch.no_grad():
-            outputs = model(**inputs)
-            last_hidden_states = outputs.last_hidden_state.to("cpu")
-            pooler_output = outputs.pooler_output.to("cpu")
-
-        # Save the embedding
-        save_embedding(last_hidden_states, last_layer_output_filepath)
-        save_embedding(pooler_output, pooler_output_filepath)
-
-        # # Save the embedding
-        # save_embedding(embedding, output_filepath)
-        return output_filename
-    except Exception as e:
-        print(f"Error processing {row['FileName']}: {e}")
-        return None
-
-def extract_embeddings_parallel(df: pd.DataFrame, output_dir: str, model, tokenizer, device: torch.device, max_workers: int = 4):
-    """
-    Extract embeddings from texts in the DataFrame in parallel using ThreadPoolExecutor.
-
-    Args:
-        df (pd.DataFrame): DataFrame containing the data.
-        output_dir (str): Directory where embeddings will be saved.
-        model (AutoModel): Pre-trained model for embedding extraction.
-        tokenizer (AutoTokenizer): Tokenizer corresponding to the model.
-        device (torch.device): Computation device.
-        max_workers (int): Number of threads to use for parallel processing.
-    """
-    with ThreadPoolExecutor(max_workers=max_workers) as executor:
-        # Submit all tasks to the executor
-        futures = [
-            executor.submit(process_row, row, output_dir, model, tokenizer, device)
-            for _, row in df.iterrows()
-        ]
-
-        # Use tqdm to display a progress bar
-        for future in tqdm(as_completed(futures), total=len(futures), desc="Extracting embeddings"):
-            result = future.result()
-            # Optionally, handle the result (e.g., log successful processing)
-            # For now, we ignore it as tqdm handles the progress
-            pass
-
-    # After all tasks are completed, count successful embeddings
-    successful = df.shape[0] - futures.count(None)
-    print(f"Successfully processed {successful}/{len(df)} rows.")
 
 def main():
-    """
-    Main function to orchestrate the embedding extraction process.
-    """
-    print(f"Loading CSV file from '{INPUT_CSV}'...")
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--input-csv", required=True, help="CSV with FileName and Transcript columns")
+    parser.add_argument("--output-dir", required=True, help="Base output directory")
+    parser.add_argument("--model-name", default="Qwen/Qwen3-Embedding-0.6B")
+    parser.add_argument("--max-length", type=int, default=512)
+    parser.add_argument("--input-dir", default="", help="Optional root dir to preserve subfolders (like wav2vec script)")
+
+    parser.add_argument("--file-col", default="FileName")
+    parser.add_argument("--text-col", default="Transcript")
+    parser.add_argument("--transcript-audio", action="store_true", help="If set, generate transcript from audio using ASR model")
+    parser.add_argument("--base-dir", default=None, help="Audio files base directory, if needed for transcription")
+
+    parser.add_argument("--use-instruct", action="store_true")
+    parser.add_argument("--task", default="Represent the transcript for speech emotion recognition.")
+
+    args = parser.parse_args()
+
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    if device.type != "cuda":
+        print("Warning: CUDA is not available. Using CPU.")
+
     try:
-        df = pd.read_csv(INPUT_CSV)
-        print(f"Loaded CSV with {len(df)} rows.")
+        df = pd.read_csv(args.input_csv)
+        print(df)
     except Exception as e:
-        print(f"Failed to load CSV file: {e}")
+        print(f"Failed to load CSV: {e}")
         sys.exit(1)
 
-    # Load model and tokenizer
-    model, tokenizer = load_model(MODEL_NAME, device)
+    if args.file_col not in df.columns:
+        raise ValueError(f"CSV must contain columns: {args.file_col}")
 
-    # Create output directory if it doesn't exist
-    if not os.path.exists(OUTPUT_DIR):
-        os.makedirs(OUTPUT_DIR)
-        print(f"Created output directory at '{OUTPUT_DIR}'.")
+    model, tokenizer = load_model(args.model_name, device)
 
-    # Determine the number of workers
-    if torch.cuda.is_available():
-        # If using GPU, limit the number of threads to prevent GPU contention
-        max_workers = 4  # Adjust based on your GPU's capability
-        print(f"Using {max_workers} threads for GPU-based processing.")
-    else:
-        # If using CPU, use a higher number of threads
-        max_workers = os.cpu_count() or 4
-        print(f"Using {max_workers} threads for CPU-based processing.")
+    out_base = join(args.output_dir, "Texts_Qwen3_embeddings")
+    os.makedirs(out_base, exist_ok=True)
 
-    # Extract embeddings in parallel
-    print(f"Starting embedding extraction...")
-    extract_embeddings_parallel(
-        df=df,
-        output_dir=OUTPUT_DIR,
-        model=model,
-        tokenizer=tokenizer,
-        device=device,
-        max_workers=max_workers
-    )
+    input_dir = args.input_dir.strip() or None
 
-    print("Embedding extraction completed successfully.")
+    if args.transcript_audio:
+        asr_model = get_asr_model()
+
+    saved = 0
+    skipped = 0
+    failed = 0
+
+    for _, row in tqdm(df.iterrows(), total=len(df), desc="Extracting text embeddings"):
+        fname = str(row[args.file_col])
+
+        if args.transcript_audio:
+            audio_path = os.path.join(args.base_dir, fname) if args.base_dir else fname
+            text = get_transcript(asr_model, audio_path)
+        else:
+            text = str(row[args.text_col])
+
+        if args.use_instruct:
+            text = get_detailed_instruct(args.task, text)
+
+        out_path = make_output_path(fname, input_dir, out_base)
+
+        if exists(out_path):
+            skipped += 1
+            continue
+
+        try:
+            emb = extract_embedding_one(
+                model, tokenizer, text,
+                device=device,
+                max_length=args.max_length
+            )
+            torch.save(emb, out_path)
+            saved += 1
+        except Exception as e:
+            failed += 1
+            print(f"[FAIL] {fname}: {e}")
+
+    print(f"Done. saved={saved}, skipped(existing)={skipped}, failed={failed}")
+
 
 if __name__ == "__main__":
     main()

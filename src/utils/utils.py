@@ -13,7 +13,8 @@ from utils.dataloader import (
     BimodalEmbeddingMelSpecDataset,
     BimodalEmbeddingF0Dataset,
     BimodalEmbeddingF0MelSpecDataset,
-    DynamicAudioTextF0MelSpecDataset
+    DynamicAudioTextF0MelSpecDataset,
+    DynamicTextDataset
 )
 
 
@@ -41,15 +42,17 @@ def build_dataloaders(config):
     )
 
     # check if "config.data.gender2id" exists
-    print("-"*100)
-    if hasattr(config.data, "gender2id"):
-        print("Gender2id exists!")
-        train_data["gender_id"] = train_data[config.datasets.train[0].gender_column].map(
-            config.data.gender2id
-        )
-        val_data["gender_id"] = val_data[config.datasets.val[0].gender_column].map(
-            config.data.gender2id
-        )
+    # print("-"*100)
+    # print(config.data)
+    # print(hasattr(config.data, "gender2id"))
+    # if hasattr(config.data, "gender2id"):
+    #     print("Gender2id exists!")
+    #     train_data["gender_id"] = train_data[config.datasets.train[0].gender_column].map(
+    #         config.data.gender2id
+    #     )
+    #     val_data["gender_id"] = val_data[config.datasets.val[0].gender_column].map(
+    #         config.data.gender2id
+    #     )
 
     if config.model.model_type.lower() == "embedding":
         train_dataset = EmbeddingDataset(
@@ -435,7 +438,28 @@ def build_dataloaders(config):
             class_num=config.data.num_classes,
             target_sr=config.data.target_sr,
         )
+    elif config.model.model_type.lower() == "dynamic_text":
+        train_dataset = DynamicTextDataset(
+            data=train_data,
+            filename_column=config.datasets.train[0].filename_column,
+            transcript_column=config.datasets.train[0].transcript_column,
+            target_column="target",
+            base_dir=config.datasets.train[0].base_dir,
+            use_text_augmentation=config.data.use_text_augmentation,
+            text_augmentation_p=config.data.text_augmentation_p,
+            use_prompt=config.data.use_prompt,
+            prompt_text=config.data.prompt_text,
+        )
 
+        val_dataset = DynamicTextDataset(
+            data=val_data,
+            filename_column=config.datasets.train[0].filename_column,
+            target_column="target",
+            base_dir=config.datasets.train[0].base_dir,
+            transcript_column=config.datasets.train[0].transcript_column,
+            use_prompt=config.data.use_prompt,
+            prompt_text=config.data.prompt_text,
+        )
 
     return train_dataset, val_dataset
 

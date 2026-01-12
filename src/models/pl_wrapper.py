@@ -37,7 +37,8 @@ from utils.dataloader import (
     BimodalEmbeddingMelSpecCollate,
     BimodalEmbeddingF0Collate,
     BimodalEmbeddingF0MelSpecCollate,
-    DynamicAudioTextF0MelSpecCollate
+    DynamicAudioTextF0MelSpecCollate,
+    DynamicTextCollate
 )
 
 
@@ -174,11 +175,17 @@ class PLWrapper(pl.LightningModule):
         """Return the training dataloader."""
         if self.config.model.model_type.lower() == "xeus" or self.config.model.model_type.lower() == "nest":
             collate_fn = XEUSNestCollate()
-        elif self.config.model.model_type.lower() == "dynamic":
+        elif self.config.model.model_type.lower() == "dynamic" or \
+            self.config.model.model_type.lower() == "dynamic_audio":
             processor = AutoFeatureExtractor.from_pretrained(self.config.model.model_name)
             collate_fn = DynamicCollate(
                 target_sr=self.config.data.target_sr,
                 processor=processor,
+            )
+        elif self.config.model.model_type.lower() == "dynamic_text":
+            text_tokenizer = AutoTokenizer.from_pretrained(self.config.model.model_name)
+            collate_fn = DynamicTextCollate(
+                text_tokenizer=text_tokenizer,
             )
         elif self.config.model.model_type.lower() == "dynamic_audio_text" \
             or self.config.model.model_type.lower() == "dynamic_audio_text_melspec":
@@ -286,11 +293,17 @@ class PLWrapper(pl.LightningModule):
         """Return the validation dataloader."""
         if self.config.model.model_type.lower() == "xeus" or self.config.model.model_type.lower() == "nest":
             collate_fn = XEUSNestCollate()
-        elif self.config.model.model_type.lower() == "dynamic":
+        elif self.config.model.model_type.lower() == "dynamic" or \
+            self.config.model.model_type.lower() == "dynamic_audio":
             processor = AutoFeatureExtractor.from_pretrained(self.config.model.model_name)
             collate_fn = DynamicCollate(
                 target_sr=self.config.data.target_sr,
                 processor=processor,
+            )
+        elif self.config.model.model_type.lower() == "dynamic_text":
+            text_tokenizer = AutoTokenizer.from_pretrained(self.config.model.model_name)
+            collate_fn = DynamicTextCollate(
+                text_tokenizer=text_tokenizer,
             )
         elif self.config.model.model_type.lower() == "dynamic_audio_text" \
             or self.config.model.model_type.lower() == "dynamic_audio_text_melspec":

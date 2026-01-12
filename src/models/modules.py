@@ -642,12 +642,13 @@ class SERDynamicModel(SERBaseModel):
             param.requires_grad = False
 
     def _get_embeddings(self, x: torch.Tensor) -> torch.Tensor:
-        audio_input, genders = x
+        modality_input, genders = x
+
         if self.freeze_backbone:
             with torch.no_grad():
-                outputs = self.backbone(**audio_input, output_hidden_states=True)
+                outputs = self.backbone(**modality_input, output_hidden_states=True)
         else:
-            outputs = self.backbone(**audio_input, output_hidden_states=True)
+            outputs = self.backbone(**modality_input, output_hidden_states=True)
         hidden_states = outputs.hidden_states  # tuple of (layer_0,...,layer_n)
         # [num_layers,B,T,F]
         all_layers = torch.stack(hidden_states)
