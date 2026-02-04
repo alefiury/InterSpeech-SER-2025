@@ -1390,6 +1390,8 @@ class BimodalEmbeddingDataset(Dataset):
         # Mixup
         self.mixup_alpha = mixup_alpha
 
+        print(f"\n\nMIXUPALPHA {self.mixup_alpha}\n\n")
+
         self.data_type = data_type
 
         self.class_num = class_num

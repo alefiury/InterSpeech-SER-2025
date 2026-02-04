@@ -475,8 +475,24 @@ class PLWrapper(pl.LightningModule):
         """Training step."""
         input_features, targets = train_batch
 
-        logits = self.forward(input_features)
-        loss = self.criterion(logits, targets)
+        out = self.forward(input_features)
+
+        if isinstance(out, (tuple, list)) and len(out) == 2:
+            logits, aux_loss = out
+        else:
+            logits, aux_loss = out, None
+
+        ce_loss = self.criterion(logits, targets)
+
+        loss = ce_loss
+
+        if aux_loss is not None:
+            w = float(getattr(self.config.loss, "cka_weight", 1.0))
+            loss = ce_loss + w * aux_loss
+
+            # optional logs
+            self.log("train/cka_loss", aux_loss, on_step=True, on_epoch=True, prog_bar=False, logger=True)
+            self.log("train/ce_loss",  ce_loss,  on_step=True, on_epoch=True, prog_bar=False, logger=True)
 
         if self.config.data.get("mixup_alpha", 0.0) > 0.0:
             targets = torch.argmax(targets, dim=1)
@@ -500,8 +516,24 @@ class PLWrapper(pl.LightningModule):
         """Validation step."""
         input_features, targets = val_batch
 
-        logits = self.forward(input_features)
-        loss = self.criterion(logits, targets)
+        out = self.forward(input_features)
+
+        if isinstance(out, (tuple, list)) and len(out) == 2:
+            logits, aux_loss = out
+        else:
+            logits, aux_loss = out, None
+
+        ce_loss = self.criterion(logits, targets)
+
+        loss = ce_loss
+
+        if aux_loss is not None:
+            w = float(getattr(self.config.loss, "cka_weight", 1.0))
+            loss = ce_loss + w * aux_loss
+
+            # optional logs
+            self.log("val/cka_loss", aux_loss, on_step=True, on_epoch=True, prog_bar=False, logger=True)
+            self.log("val/ce_loss",  ce_loss,  on_step=True, on_epoch=True, prog_bar=False, logger=True)
 
         if self.config.data.get("mixup_alpha", 0.0) > 0.0:
             targets = torch.argmax(targets, dim=1)

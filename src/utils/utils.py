@@ -297,7 +297,7 @@ def build_dataloaders(config):
             seqaug_alpha=config.data.seqaug_alpha,
             seqaug_p=config.data.seqaug_p,
             # Mixup parameters (Optional)
-            mixup_alpha=config.data.mixup_alpha,
+            mixup_alpha=config.data.get("mixup_alpha", 0.0),
         )
 
         val_dataset = BimodalEmbeddingDataset(
@@ -307,7 +307,7 @@ def build_dataloaders(config):
             audio_base_dir=config.datasets.train[0].audio_base_dir,
             text_base_dir=config.datasets.train[0].text_base_dir,
             # Mixup parameters (Optional)
-            mixup_alpha=config.data.mixup_alpha,
+            mixup_alpha=config.data.get("mixup_alpha", 0.0),
             data_type="val",
         )
     elif config.model.model_type.lower() == "bimodal_embedding_melspec":
