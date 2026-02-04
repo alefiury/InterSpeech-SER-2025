@@ -37,6 +37,52 @@ def swish(x: torch.Tensor) -> torch.Tensor:
     return x * torch.sigmoid(x)
 
 
+class CKALoss(nn.Module):
+    def __init__(self):
+        super().__init__()
+
+    def centering(self, K):
+        """
+        Centers the kernel matrix K using the centering matrix H = I - (1/n)11^T
+        Args:
+            K: Kernel matrix of shape [n x n]
+        Returns:
+            Centered kernel matrix
+        """
+        n = K.shape[0]
+        H = torch.eye(n, device=K.device) - (1.0/n) * torch.ones((n, n), device=K.device)
+        return H @ K @ H
+
+    def forward(self, wav_features, rob_features):
+        """
+        Compute CKA loss between WavLM and RoBERTa features. This is not the frame-level output of WavLM and RoBERTa, it needs to be any kind of aggregation (attention pooling, mean pooling, etc)
+        Args:
+            wav_features: WavLM features after transformer [batch_size x hidden_dim]
+            rob_features: RoBERTa features after transformer [batch_size x hidden_dim]
+        Returns:
+            CKA loss
+        """
+        # Compute Gram matrices
+        K = wav_features @ wav_features.T  # [batch_size x batch_size]
+        L = rob_features @ rob_features.T  # [batch_size x batch_size]
+
+        # Center Gram matrices
+        K_centered = self.centering(K)
+        L_centered = self.centering(L)
+
+        # Compute HSIC
+        HSIC_KL = torch.trace(K_centered @ L_centered)
+        HSIC_KK = torch.trace(K_centered @ K_centered)
+        HSIC_LL = torch.trace(L_centered @ L_centered)
+
+        # Compute CKA
+        epsilon = 1e-8  # Small constant for numerical stability
+        CKA = HSIC_KL / (torch.sqrt(HSIC_KK * HSIC_LL) + epsilon)
+
+        # Return loss
+        return CKA
+
+
 class MLP_SwiGLU(nn.Module):
     def __init__(
         self,
@@ -814,6 +860,10 @@ class SERDynamicAudioTextModel(nn.Module):
         text_proj_dropout: float = 0.2,
         # use transformer encoder
         use_transformer_enc: bool = False,
+        # use attentive pooling after projection
+        use_attpool_after_proj: bool = False,
+        # Central Kernel Alignment
+        use_cka_loss: bool = False,
     ):
         super().__init__()
         self.audio_model_name = audio_model_name
@@ -897,6 +947,12 @@ class SERDynamicAudioTextModel(nn.Module):
             nn.ReLU(),
             nn.Dropout(text_proj_dropout),
         )
+
+        self.use_attpool_after_proj = use_attpool_after_proj
+
+        self.cka_module = None
+        if use_cka_loss:
+            self.cka_module = CKALoss()
 
         self.use_transformer_enc = use_transformer_enc
         if use_transformer_enc:
@@ -1077,6 +1133,15 @@ class SERDynamicAudioTextModel(nn.Module):
             audio_embeddings = self.audio_proj(audio_embeddings)
             # Text projection
             text_embeddings = self.text_proj(text_embeddings)
+
+            if self.use_attpool_after_proj:
+                # use sigmoid to get weights for audio and text embeddings
+                audio_embeddings_sw = torch.sigmoid(audio_embeddings)
+                text_embeddings_sw = torch.sigmoid(text_embeddings)
+
+                audio_embeddings = audio_embeddings * audio_embeddings_sw
+                text_embeddings = text_embeddings * text_embeddings_sw
+
         # Gender embedding
         if self.gender_encoder is not None:
             gender_emb = self.gender_encoder(genders)
@@ -1086,6 +1151,11 @@ class SERDynamicAudioTextModel(nn.Module):
             logits_input = torch.cat((audio_embeddings, text_embeddings), dim=-1)  # [B, AF+TF]
         # MLP classification
         logits = self.mlp(logits_input).squeeze(-1)
+
+        if self.cka_module is not None:
+            cka_loss = self.cka_module(audio_embeddings, text_embeddings)
+            return logits, cka_loss
+
         return logits
 
 
@@ -2346,6 +2416,10 @@ class SERBimodalEmbeddingModel(nn.Module):
         use_mdat_multihead: bool = False,
         # use SwiGLU MLP
         use_swiglu_mlp: bool = False,
+        # use attentive pooling after projection
+        use_attpool_after_proj: bool = False,
+        # Central Kernel Alignment
+        use_cka_loss: bool = False,
     ):
         super().__init__()
         # Only one special pooling/fusion can be active at once.
@@ -2384,6 +2458,12 @@ class SERBimodalEmbeddingModel(nn.Module):
             nn.ReLU(),
             nn.Dropout(text_proj_dropout),
         )
+
+        self.use_attpool_after_proj = use_attpool_after_proj
+
+        self.cka_module = None
+        if use_cka_loss:
+            self.cka_module = CKALoss()
 
         self.use_transformer_enc = use_transformer_enc
         if use_transformer_enc:
@@ -2839,10 +2919,27 @@ class SERBimodalEmbeddingModel(nn.Module):
             audio_embeddings = self.audio_proj(audio_embeddings)
             # Text projection
             text_embeddings = self.text_proj(text_embeddings)
+
+            if self.use_attpool_after_proj:
+                # use sigmoid to get weights for audio and text embeddings
+                audio_embeddings_sw = torch.sigmoid(audio_embeddings)
+                text_embeddings_sw = torch.sigmoid(text_embeddings)
+
+                audio_embeddings = audio_embeddings * audio_embeddings_sw
+                text_embeddings = text_embeddings * text_embeddings_sw
+
         # Concatenate audio and text embeddings
         logits_input = torch.cat((audio_embeddings, text_embeddings), dim=-1)  # [B,AF+TF]
+
+        # check the dim spected by the MLP
+        # print("MLP Input Dim:", self.mlp.input_size)
         # MLP classification
         logits = self.mlp(logits_input).squeeze(-1)
+
+        if self.cka_module is not None:
+            cka_loss = self.cka_module(audio_embeddings, text_embeddings)
+            return logits, cka_loss
+
         return logits
 
 
