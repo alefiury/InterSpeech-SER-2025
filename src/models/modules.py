@@ -869,11 +869,11 @@ class SERDynamicAudioTextModel(nn.Module):
         self.audio_model_name = audio_model_name
         self.text_model_name = text_model_name
 
-        audio_config = AutoConfig.from_pretrained(audio_model_name, output_hidden_states=True)
-        self.audio_backbone = AutoModel.from_pretrained(audio_model_name, config=audio_config)
+        audio_config = AutoConfig.from_pretrained(audio_model_name, output_hidden_states=True, trust_remote_code=True)
+        self.audio_backbone = AutoModel.from_pretrained(audio_model_name, config=audio_config, trust_remote_code=True)
 
-        text_config = AutoConfig.from_pretrained(text_model_name, output_hidden_states=True)
-        self.text_backbone = AutoModel.from_pretrained(text_model_name, config=text_config)
+        text_config = AutoConfig.from_pretrained(text_model_name, output_hidden_states=True, trust_remote_code=True)
+        self.text_backbone = AutoModel.from_pretrained(text_model_name, config=text_config, trust_remote_code=True)
 
         self.gender_encoder = None
         if use_gender_emb:
@@ -4107,4 +4107,125 @@ class SERDynamicAudioTextF0MelSpecModel(SERDynamicAudioTextModel):
         logits_input = torch.cat((audio_embeddings, text_embeddings, f0_embeddings, mel_spec_embeddings), dim=-1) # [B,AF+TF]
         # MLP classification
         logits = self.mlp(logits_input).squeeze(-1)
+        return logits
+
+
+class SERGatedDynamicAudioTextModel(SERDynamicAudioTextModel):
+    """
+    Extends SERDynamicAudioTextModel with a learned gating mechanism between modalities.
+
+    After projecting audio and text embeddings to a common space, a sigmoid gate
+    (conditioned on the concatenation of both projected embeddings) controls how much
+    each modality contributes to the final representation:
+
+        g        = sigmoid(W_g * [audio_proj ; text_proj] + b_g)   # [B, proj_dim]
+        fused    = g * audio_proj + (1 - g) * text_proj            # [B, proj_dim]
+
+    This lets the model suppress an unreliable modality (e.g. noisy audio or
+    missing/short transcripts) on a per-sample, per-dimension basis, rather than
+    always treating both modalities equally.
+
+    The MLP then classifies from `fused` instead of the naive concatenation, so
+    mlp_input_dim should equal the shared projection dimension (audio_feat_dim /
+    text_feat_dim — they must be equal for gating to make sense).
+
+    Args:
+        gate_hidden_dim (int): Hidden size of the two-layer gating MLP.
+            Defaults to the projection dimension.
+        gate_dropout (float): Dropout applied inside the gating network.
+        **kwargs: All arguments forwarded to SERDynamicAudioTextModel.
+    """
+
+    def __init__(
+        self,
+        gate_hidden_dim: Optional[int] = None,
+        gate_dropout: float = 0.1,
+        **kwargs,
+    ):
+        super().__init__(**kwargs)
+
+        # Infer the shared projection dimension from the audio projection layer.
+        # audio_proj is nn.Sequential: Linear -> ReLU -> Dropout
+        audio_proj_dim: int = self.audio_proj[0].out_features
+        text_proj_dim: int  = self.text_proj[0].out_features
+
+        if audio_proj_dim != text_proj_dim:
+            raise ValueError(
+                f"SERGatedDynamicAudioTextModel requires audio_feat_dim == text_feat_dim "
+                f"so that gating is well-defined, but got "
+                f"audio_proj={audio_proj_dim} vs text_proj={text_proj_dim}."
+            )
+
+        self._proj_dim = audio_proj_dim
+        _gate_hidden = gate_hidden_dim if gate_hidden_dim is not None else audio_proj_dim
+
+        # Two-layer gating network: maps [audio; text] -> gate vector in (0,1)^proj_dim
+        self.gate_network = nn.Sequential(
+            nn.Linear(audio_proj_dim * 2, _gate_hidden),
+            nn.ReLU(),
+            nn.Dropout(gate_dropout),
+            nn.Linear(_gate_hidden, audio_proj_dim),
+            nn.Sigmoid(),
+        )
+
+    # ------------------------------------------------------------------
+    # Internal helpers
+    # ------------------------------------------------------------------
+
+    def _fuse(
+        self,
+        audio_emb: torch.Tensor,
+        text_emb: torch.Tensor,
+    ) -> torch.Tensor:
+        """
+        Soft-gate fusion.
+
+        Args:
+            audio_emb: [B, proj_dim]
+            text_emb:  [B, proj_dim]
+        Returns:
+            fused:     [B, proj_dim]
+        """
+        gate = self.gate_network(torch.cat((audio_emb, text_emb), dim=-1))  # [B, proj_dim]
+        return gate * audio_emb + (1.0 - gate) * text_emb                   # [B, proj_dim]
+
+    # ------------------------------------------------------------------
+    # Forward
+    # ------------------------------------------------------------------
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        # 1. Backbone feature extraction  [B, num_layers, T, F]
+        audio_hidden_states, text_hidden_states, genders = self._get_embeddings(x)
+
+        # 2. Layer weighting + pooling  ->  [B, F]
+        if self.use_transformer_enc:
+            audio_embeddings, text_embeddings = self.apply_transformer_enc(
+                audio_hidden_states, text_hidden_states
+            )
+        else:
+            audio_embeddings, text_embeddings = self._apply_pooling(
+                audio_hidden_states, text_hidden_states
+            )
+            # 3. Modality projections  ->  [B, proj_dim]
+            audio_embeddings = self.audio_proj(audio_embeddings)
+            text_embeddings  = self.text_proj(text_embeddings)
+
+        # 4. Gated fusion  ->  [B, proj_dim]
+        fused = self._fuse(audio_embeddings, text_embeddings)
+
+        # 5. Optional gender embedding
+        if self.gender_encoder is not None:
+            gender_emb = self.gender_encoder(genders)
+            logits_input = torch.cat((fused, gender_emb), dim=-1)
+        else:
+            logits_input = fused
+
+        # 6. MLP classification
+        logits = self.mlp(logits_input).squeeze(-1)
+
+        # 7. Optional CKA auxiliary loss
+        if self.cka_module is not None:
+            cka_loss = self.cka_module(audio_embeddings, text_embeddings)
+            return logits, cka_loss
+
         return logits

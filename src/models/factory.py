@@ -18,7 +18,8 @@ from models.modules import (
     SERBimodalEmbeddingF0Model,
     SERBimodalEmbeddingMelSpecModel,
     SERBimodalEmbeddingF0MelSpecModel,
-    SERDynamicAudioTextF0MelSpecModel
+    SERDynamicAudioTextF0MelSpecModel,
+    SERGatedDynamicAudioTextModel
 )
 
 
@@ -71,6 +72,8 @@ def create_ser_model(
         return SERBimodalEmbeddingF0MelSpecModel(**kwargs)
     elif model_type.lower() == "dynamic_audio_text_f0_melspec":
         return SERDynamicAudioTextF0MelSpecModel(**kwargs)
+    elif model_type.lower() == "dynamic_gated_audio_text":
+        return SERGatedDynamicAudioTextModel(**kwargs)
     else:
         raise ValueError(f"Unknown model_type: {model_type}. Must be \
             'dynamic', 'dynamic_audio_text', 'dynamic_audio_text_speakeremb', \

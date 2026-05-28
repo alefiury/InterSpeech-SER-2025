@@ -482,7 +482,7 @@ class PLWrapper(pl.LightningModule):
         else:
             logits, aux_loss = out, None
 
-        ce_loss = self.criterion(logits, targets)
+        ce_loss = self.criterion(logits.float(), targets.long())
 
         loss = ce_loss
 
@@ -523,7 +523,7 @@ class PLWrapper(pl.LightningModule):
         else:
             logits, aux_loss = out, None
 
-        ce_loss = self.criterion(logits, targets)
+        ce_loss = self.criterion(logits.float(), targets.long())
 
         loss = ce_loss
 
