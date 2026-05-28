@@ -11,7 +11,7 @@ loss:
 datasets:
     train:
         - name: Train
-          metadata_path: "/home/lucas.ueda/github/MM-ser/bin/mps2_train.csv"
+          metadata_path: "/home/lucas.ueda/github/MM-ser/bin/mps2_train_emocodes.csv"
           base_dir: "/hadatasets/lucas.ueda/msp_podcast_2_ser/Audios/"
           filename_column: "FileName"
           transcript_column: "Text"
@@ -20,7 +20,7 @@ datasets:
 
     val:
         - name: Validation
-          metadata_path: "/home/lucas.ueda/github/MM-ser/bin/mps2_val.csv"
+          metadata_path: "/home/lucas.ueda/github/MM-ser/bin/mps2_val_emocodes.csv"
           base_dir: "/hadatasets/lucas.ueda/msp_podcast_2_ser/Audios/"
           filename_column: "FileName"
           transcript_column: "Text"

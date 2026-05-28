@@ -127,7 +127,8 @@ def build_dataloaders(config):
         )
     elif config.model.model_type.lower() == "dynamic_audio_text" \
         or config.model.model_type.lower() == "xeus_text" \
-            or config.model.model_type.lower() == "dynamic_audio_text_melspec":
+            or config.model.model_type.lower() == "dynamic_audio_text_melspec" \
+                or config.model.model_type.lower() == "dynamic_gated_audio_text":
         train_dataset = DynamicAudioTextDataset(
             data=train_data,
             base_dir=config.datasets.train[0].base_dir,

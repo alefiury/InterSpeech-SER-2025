@@ -187,8 +187,11 @@ class PLWrapper(pl.LightningModule):
             collate_fn = DynamicTextCollate(
                 text_tokenizer=text_tokenizer,
             )
-        elif self.config.model.model_type.lower() == "dynamic_audio_text" \
-            or self.config.model.model_type.lower() == "dynamic_audio_text_melspec":
+        elif (
+                self.config.model.model_type.lower() == "dynamic_audio_text"
+                or self.config.model.model_type.lower() == "dynamic_audio_text_melspec"
+                or self.config.model.model_type.lower() == "dynamic_gated_audio_text" 
+            ):
             processor = AutoFeatureExtractor.from_pretrained(self.config.model.audio_model_name)
             text_tokenizer = AutoTokenizer.from_pretrained(self.config.model.text_model_name)
             collate_fn = DynamicAudioTextCollate(
@@ -305,8 +308,11 @@ class PLWrapper(pl.LightningModule):
             collate_fn = DynamicTextCollate(
                 text_tokenizer=text_tokenizer,
             )
-        elif self.config.model.model_type.lower() == "dynamic_audio_text" \
-            or self.config.model.model_type.lower() == "dynamic_audio_text_melspec":
+        elif (
+                self.config.model.model_type.lower() == "dynamic_audio_text"
+                or self.config.model.model_type.lower() == "dynamic_audio_text_melspec"
+                or self.config.model.model_type.lower() == "dynamic_gated_audio_text" 
+            ):
             processor = AutoFeatureExtractor.from_pretrained(self.config.model.audio_model_name)
             text_tokenizer = AutoTokenizer.from_pretrained(self.config.model.text_model_name)
             collate_fn = DynamicAudioTextCollate(
